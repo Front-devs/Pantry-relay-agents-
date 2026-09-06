@@ -1,0 +1,10 @@
+# The intervention lifecycle (strands.interventions: InterventionHandler,
+# Proceed, Confirm, Deny) is what the coordinator gate is built on. It does not
+# exist in early 1.x, so the floor is the version this was built and tested
+# against rather than a nominal >=1.0.
+strands-agents>=1.54.0,<2
+pydantic>=2.0
+boto3>=1.34
+
+# dev
+pytest>=8.0
