@@ -20,6 +20,7 @@ import os
 import secrets
 import sys
 import threading
+import time
 import webbrowser
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -41,7 +42,53 @@ for _stream in (sys.stdout, sys.stderr):
 from pantryrelay.data import LEDGER, OUTBOX, PANTRIES, reset  # noqa: E402
 from pantryrelay.gate import CoordinatorGate  # noqa: E402
 from pantryrelay.resolution import apply_resolution, coerce_choice  # noqa: E402
-from pantryrelay.trace import run_morning  # noqa: E402
+from pantryrelay.trace import LiveUnavailable, run_morning, run_morning_live  # noqa: E402
+
+#: Whether this deployment will call Bedrock at all. Off unless asked for,
+#: because the offline run is the one that must never fail: it is what keeps the
+#: public link working when a key expires the night before judging.
+LIVE_ENABLED = os.environ.get("PANTRYRELAY_LIVE", "").strip().lower() in {"1", "true", "yes"}
+
+#: A live run is roughly sixteen model calls. On a public URL that is a bill
+#: anyone can run up, so the whole deployment gets a fixed allowance per hour and
+#: falls back to the offline run once it is spent. This is deliberately crude;
+#: the point is that there is a ceiling, not that it is finely tuned.
+LIVE_RUNS_PER_HOUR = int(os.environ.get("PANTRYRELAY_LIVE_BUDGET", "20"))
+_live_runs: list[float] = []
+
+
+#: At most one live run at a time, and callers do not queue behind it.
+#:
+#: A live run is sixteen model calls against Bedrock, and it holds the state lock
+#: for all of them because the agents mutate the same seeded network every other
+#: request reads. That is a real limitation: while one live run is in flight the
+#: deployment is effectively single-user. Letting requests queue would turn a
+#: slow demo into an unresponsive one, so a second live request is refused
+#: immediately and told to take the offline run instead.
+LIVE_SLOT = threading.BoundedSemaphore(1)
+
+_budget_lock = threading.Lock()
+
+
+def live_budget_denial() -> str | None:
+    """Spend one unit of the live-run allowance, or say why it cannot be spent."""
+    now = time.time()
+    with _budget_lock:
+        _live_runs[:] = [t for t in _live_runs if now - t < 3600]
+        if len(_live_runs) >= LIVE_RUNS_PER_HOUR:
+            return (
+                f"Live runs are capped at {LIVE_RUNS_PER_HOUR} an hour for this "
+                "demo and the allowance is spent."
+            )
+        _live_runs.append(now)
+    return None
+
+
+def refund_live_budget() -> None:
+    """Give back an allowance unit for a run that never reached Bedrock."""
+    with _budget_lock:
+        if _live_runs:
+            _live_runs.pop()
 
 COOKIE_NAME = "pantryrelay_sid"
 
@@ -175,11 +222,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json({"status": "ok", "message": "Pantry state reset to the 08:00 baseline"})
         elif self.path == "/api/run":
             # The page asks for a run; it does not describe one. Everything the
-            # dashboard renders comes back out of route_offer and the real
-            # CoordinatorGate, so what a viewer watches is what the gate did.
+            # dashboard renders comes back out of the real CoordinatorGate, so
+            # what a viewer watches is what the gate did.
+            live = str(self.read_json().get("mode", "")) == "live"
             gate = CoordinatorGate()
-            with session_state(session):
-                trace = run_morning(gate)
+
+            if live:
+                if not LIVE_ENABLED:
+                    self.send_json({
+                        "error": "Live mode is off for this deployment.",
+                        "remedy": "Start with --live-enabled, or set PANTRYRELAY_LIVE=1.",
+                    })
+                    return
+                denied = live_budget_denial()
+                if denied:
+                    self.send_json({"error": denied, "remedy": "Try the offline run."})
+                    return
+                if not LIVE_SLOT.acquire(blocking=False):
+                    refund_live_budget()
+                    self.send_json({
+                        "error": "A live run is already in progress.",
+                        "remedy": "Wait for it to finish, or take the offline run.",
+                    })
+                    return
+                try:
+                    with session_state(session):
+                        trace = run_morning_live(gate)
+                except LiveUnavailable as exc:
+                    refund_live_budget()
+                    self.send_json({"error": exc.problem, "remedy": exc.remedy})
+                    return
+                finally:
+                    LIVE_SLOT.release()
+            else:
+                with session_state(session):
+                    trace = run_morning(gate)
+
             session.gate = gate
             self.send_json(trace)
         elif self.path == "/api/resolve":
@@ -267,7 +345,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=default_port, help=f"port to bind server (default: {default_port})")
     parser.add_argument("--no-browser", action="store_true", help="do not open browser automatically")
+    parser.add_argument(
+        "--live-enabled",
+        action="store_true",
+        help=(
+            "allow the dashboard to run the reader and router agents against "
+            "Bedrock. Needs AWS credentials in the environment. Equivalent to "
+            "PANTRYRELAY_LIVE=1."
+        ),
+    )
     args = parser.parse_args()
+
+    global LIVE_ENABLED
+    LIVE_ENABLED = LIVE_ENABLED or args.live_enabled
 
     port = args.port
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"

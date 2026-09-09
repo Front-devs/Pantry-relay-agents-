@@ -274,9 +274,17 @@ AWS variable from the environment and running it anyway. Each viewer gets their
 own session and their own copy of the pantry network, so two people can run the
 morning at once without spending each other's freezer space.
 
-[DEPLOY.md](DEPLOY.md) covers putting the dashboard behind a public URL, on
-Render or on AWS App Runner. `render.yaml` and `apprunner.yaml` are in the repo
-root.
+The dashboard also has a **Live agents** toggle. Off, it runs the deterministic
+policy. On, it runs the reader and router agents against Bedrock, so the
+confidence scores the gate judges are the model'''s own rather than the fixtures'''.
+Both reach the same gate, and every run is labelled on screen with the path that
+produced it. Live mode is off unless a deployment opts in with
+`--live-enabled`, because the offline run is the one that must never fail.
+
+[DEPLOY.md](DEPLOY.md) covers putting the dashboard behind a public URL on Render
+or AWS App Runner, what credentials live mode needs, and the spend limits that
+keep a public link from running up a Bedrock bill. `render.yaml` and
+`apprunner.yaml` are in the repo root.
 
 Python 3.10+. If `python` is not on your PATH, use whichever launcher is —
 `py -3.14` on Windows, `python3` on most macOS and Linux setups. The commands are

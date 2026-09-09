@@ -591,6 +591,10 @@
       </div>
     </div>
     <div class="header-actions">
+      <label class="btn btn-secondary" style="cursor:pointer;gap:6px" title="Run the reader and router agents against Amazon Bedrock instead of the deterministic policy. Both reach the same gate.">
+        <input type="checkbox" id="toggle-live" style="margin:0">
+        Live agents
+      </label>
       <button class="btn btn-secondary" id="btn-reset" onclick="resetDemo()">↺ Reset</button>
       <button class="btn btn-primary" id="btn-run" onclick="runSimulation()">▶ Run Morning Triage</button>
     </div>
@@ -601,22 +605,22 @@
     <div class="hero-stats">
       <div class="stat-card">
         <div class="stat-label">Rescued Food</div>
-        <div class="stat-value" id="stat-total-lbs">2,576 lbs</div>
-        <div class="stat-caption">6 morning donation offers</div>
+        <div class="stat-value" id="stat-total-lbs">—</div>
+        <div class="stat-caption" id="stat-total-caption">eight morning donation offers</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Autonomous Triage</div>
-        <div class="stat-value" style="color: var(--success);" id="stat-routed-ratio">5 of 6</div>
-        <div class="stat-caption">Placed without interruption</div>
+        <div class="stat-value" style="color: var(--success);" id="stat-routed-ratio">—</div>
+        <div class="stat-caption" id="stat-mode">Placed without interruption</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Coordinator Gate</div>
-        <div class="stat-value" style="color: var(--warning);" id="stat-held-count">1 Held</div>
+        <div class="stat-value" style="color: var(--warning);" id="stat-held-count">—</div>
         <div class="stat-caption">Human-in-the-loop interlock</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Verified Tests</div>
-        <div class="stat-value" style="color: var(--primary);" id="stat-tests">73 Passed</div>
+        <div class="stat-value" style="color: var(--primary);" id="stat-tests">81 Passed</div>
         <div class="stat-caption">0 gate bypasses / red-teamed</div>
       </div>
     </div>
@@ -813,11 +817,21 @@
       log.prepend(item);
     }
 
-    function setStats(stats) {
+    function setStats(trace) {
+      const stats = trace.stats;
       document.getElementById('stat-routed-ratio').textContent =
         `${stats.routed} of ${stats.offers}`;
       document.getElementById('stat-held-count').textContent =
         `${stats.held} Held`;
+      /* Always say which path produced these numbers. The two reach the same
+         gate, but only one of them called a model, and a viewer should never
+         have to guess which they are looking at. */
+      document.getElementById('stat-mode').textContent = trace.mode_label || '';
+      const lbs = trace.offers.reduce((sum, o) => sum + o.lbs, 0);
+      document.getElementById('stat-total-lbs').textContent =
+        `${Math.round(lbs).toLocaleString()} lbs`;
+      document.getElementById('stat-total-caption').textContent =
+        `${stats.offers} morning donation offers`;
     }
 
     async function runSimulation() {
@@ -827,11 +841,29 @@
       document.getElementById('audit-log').innerHTML = '';
       document.getElementById('outbox-list').innerHTML = '';
 
+      const live = document.getElementById('toggle-live').checked;
+      if (live) {
+        btn.textContent = 'Calling Bedrock...';
+        addAudit('Running the reader and router agents against Amazon Bedrock. This takes a moment.', 'proceed');
+      }
+
       let trace;
       try {
-        trace = await api('/api/run');
+        trace = await api('/api/run', { mode: live ? 'live' : 'offline' });
       } catch (err) {
         addAudit('Could not reach the routing service. Is web_app.py running?', 'deny');
+        btn.disabled = false;
+        btn.textContent = '▶ Run Morning Triage';
+        return;
+      }
+
+      /* A live run can fail for reasons a viewer should see stated plainly:
+         no credentials on the host, a model the account cannot call, or the
+         demo's own spend cap. Say which, and leave the offline run available. */
+      if (trace.error) {
+        addAudit(trace.error, 'deny');
+        if (trace.remedy) addAudit(trace.remedy, 'deny');
+        document.getElementById('toggle-live').checked = false;
         btn.disabled = false;
         btn.textContent = '▶ Run Morning Triage';
         return;
@@ -854,7 +886,7 @@
         renderOffers();
       }
 
-      setStats(trace.stats);
+      setStats(trace);
       btn.textContent = trace.stats.held
         ? `${trace.stats.held} decision${trace.stats.held > 1 ? 's' : ''} waiting`
         : '✓ Morning triage complete';

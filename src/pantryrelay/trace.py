@@ -125,6 +125,168 @@ def run_morning(gate: CoordinatorGate | None = None) -> dict[str, Any]:
         })
 
     return {
+        "mode": "offline",
+        "mode_label": "deterministic routing policy, no model call",
+        "offers": offers,
+        "escalations": [
+            _escalation_payload(i, e) for i, e in enumerate(gate.escalations)
+        ],
+        "pantries": _pantry_state(),
+        "stats": {
+            "offers": len(offers),
+            "routed": sum(1 for o in offers if o["status"] == "routed"),
+            "held": sum(1 for o in offers if o["status"] == "held"),
+            "bookings": len(LEDGER),
+            "messages": len(OUTBOX),
+        },
+    }
+
+
+# -- the live path ---------------------------------------------------------
+#
+# Everything above reaches the gate through routing.py. Everything below reaches
+# the *same* gate through Strands' before_tool_call, with two real agents and a
+# real Bedrock model in between. The payload shape is identical on purpose: the
+# dashboard renders either one without knowing which it asked for, and says so
+# on screen.
+#
+# This is the only part of the web path that needs AWS credentials, and it is
+# imported lazily so that a deployment without them still serves the offline
+# run rather than failing at start-up.
+
+
+class LiveUnavailable(RuntimeError):
+    """Bedrock could not be reached or would not answer.
+
+    Carries a sentence a viewer can act on rather than a stack trace, because
+    this surfaces on a public dashboard.
+    """
+
+    def __init__(self, problem: str, remedy: str) -> None:
+        super().__init__(problem)
+        self.problem = problem
+        self.remedy = remedy
+
+
+def run_morning_live(gate: CoordinatorGate | None = None) -> dict[str, Any]:
+    """Read every sample with the reader agent, place it with the router agent.
+
+    Unlike the offline path this does not use ``fixtures.py`` at all. The offers
+    are whatever the reader agent actually extracts from the raw files, which is
+    the point: the confidence scores and ambiguities the gate then judges are the
+    model's own, not ours.
+    """
+    from pathlib import Path
+
+    from botocore.exceptions import (
+        BotoCoreError,
+        ClientError,
+        NoCredentialsError,
+        NoRegionError,
+    )
+
+    from .agent import build_model, build_reader, build_router, read_offer
+
+    samples_dir = Path(__file__).resolve().parents[2] / "samples"
+
+    reset()
+    gate = gate or CoordinatorGate()
+
+    try:
+        model = build_model()
+        reader = build_reader(model)
+
+        offers: list[dict[str, Any]] = []
+        for filename in SAMPLE_FILES:
+            raw = (samples_dir / filename).read_text(encoding="utf-8")
+            offer = read_offer(raw, reader=reader)
+
+            booked_before, sent_before = len(LEDGER), len(OUTBOX)
+            held_before = len(gate.escalations)
+
+            # A fresh router per offer: each is its own decision, and an offer
+            # that stops for a human leaves its agent mid-loop. The gate is
+            # shared, so the coordinator's queue accumulates across the morning.
+            router, _ = build_router(model, gate)
+            router(
+                f"Place this donation offer:\n\n{offer.model_dump_json(indent=2)}",
+                invocation_state={"offer": offer},
+            )
+
+            new_bookings = LEDGER[booked_before:]
+            new_messages = OUTBOX[sent_before:]
+            new_holds = gate.escalations[held_before:]
+
+            events: list[dict[str, str]] = []
+            for booking in new_bookings:
+                events.append({
+                    "verdict": "proceed",
+                    "text": (
+                        f"reserve_pickup({booking['pantry_name']}, "
+                        f"{booking['storage']}, {booking['lbs']:.0f} lbs) -> PROCEED"
+                    ),
+                })
+            for message in new_messages:
+                events.append({
+                    "verdict": "proceed",
+                    "text": f"notify_pantry_coordinator({message['to']}) -> PROCEED",
+                })
+            for esc in new_holds:
+                events.append({
+                    "verdict": "escalate",
+                    "text": f"reserve_pickup(...) -> CONFIRM ({esc.reason_code})",
+                })
+
+            offers.append({
+                "donor": offer.donor_name,
+                "channel": offer.channel,
+                "source_file": filename,
+                "lbs": offer.total_lbs,
+                "confidence": offer.extraction_confidence,
+                "ambiguities": offer.ambiguities,
+                "summary": _offer_summary(offer),
+                "status": "held" if new_holds else ("routed" if new_bookings else "stuck"),
+                "events": events,
+                "bookings": [
+                    {
+                        "pantry_name": b["pantry_name"],
+                        "lbs": b["lbs"],
+                        "storage": b["storage"],
+                        "rationale": b["rationale"],
+                    }
+                    for b in new_bookings
+                ],
+                "messages": [
+                    {"to": m["to"], "message": m["message"]} for m in new_messages
+                ],
+            })
+
+    except (NoCredentialsError, NoRegionError) as exc:
+        raise LiveUnavailable(
+            "this deployment is not configured for Bedrock",
+            f"{exc} — set AWS credentials and a region in the environment.",
+        ) from exc
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in {
+            "AccessDeniedException", "UnrecognizedClientException",
+            "ValidationException", "ResourceNotFoundException",
+            "ExpiredTokenException", "InvalidSignatureException",
+            "ThrottlingException",
+        }:
+            from .agent import DEFAULT_MODEL_ID, DEFAULT_REGION
+            raise LiveUnavailable(
+                f"Bedrock refused the call ({code})",
+                f"Model {DEFAULT_MODEL_ID!r} in {DEFAULT_REGION!r} may not be "
+                f"enabled for this account.",
+            ) from exc
+        raise
+    except BotoCoreError as exc:
+        raise LiveUnavailable("AWS could not be reached", str(exc)) from exc
+
+    return {
+        "mode": "live",
+        "mode_label": "reader and router agents on Amazon Bedrock",
         "offers": offers,
         "escalations": [
             _escalation_payload(i, e) for i, e in enumerate(gate.escalations)
