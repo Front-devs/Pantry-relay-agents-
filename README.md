@@ -108,6 +108,24 @@ items. And every pantry's capacity in the last block is untouched by the three
 held offers: the gate runs *before* the tool, so a held decision leaves nothing
 to undo.
 
+### The same morning in a browser
+
+`python web_app.py` serves the same run as a dashboard, with capacity gauges, an
+audit stream of the gate's verdicts, and a modal for each held decision. No
+credentials, and no dependencies beyond the standard library.
+
+The page holds no scripted run of its own. It posts to `/api/run`, the server
+routes every offer through a real `CoordinatorGate`, and the page renders the
+verdicts that came back — including which offers the gate refused to handle
+alone. Answering a hold posts to `/api/resolve`, which carries the decision out
+against the escalation the gate actually raised.
+
+That is worth stating plainly, because the alternative is easy and looks
+identical from the outside: a page that lists what the gate *would* say is a
+drawing of the system. Change the escalation policy here and the dashboard
+changes with it, because it never knew the answer in advance.
+`tests/test_dashboard_trace.py` pins that.
+
 ## Architecture
 
 ```mermaid
@@ -342,7 +360,7 @@ marked TODO is not done yet. Entries close **14 September 2026, 5:00 pm Pacific*
 
 | Required | Status |
 |---|---|
-| Public code repository | TODO — paste the public URL here |
+| Public code repository | done — [Front-devs/Pantry-relay-agents-](https://github.com/Front-devs/Pantry-relay-agents-) |
 | Open source license file, visible at the repo root | done — [LICENSE](LICENSE), MIT |
 | README | done — this file |
 | Architecture diagram | done — [above](#architecture) |
@@ -350,13 +368,13 @@ marked TODO is not done yet. Entries close **14 September 2026, 5:00 pm Pacific*
 | The video must show the project working *and* pitch (1) the problem (2) who it is for (3) why it matters | TODO |
 | Text description of features and functionality | TODO — a Devpost field, written for that form, not this README pasted in |
 | AWS Builder ID | TODO |
-| Live demo link *(optional; strengthens the Technical Implementation score)* | TODO or n/a |
+| Live demo link *(optional; strengthens the Technical Implementation score)* | TODO — `web_app.py` is deployable as-is; it binds `0.0.0.0` and honours `PORT` |
 | builder.aws blog post *(optional; up to +0.6 on the final score)* | TODO or n/a |
 
 Track fit, for the pitch: Good Neighbor Agents asks for "an agent that helps
 groups of people, not just one — neighborhoods, nonprofits, food banks, schools,
-libraries, small local orgs." The user here is one coordinator; the beneficiaries
-are the pantries she routes to.
+libraries, small local orgs." The user here is one coordinator; the
+beneficiaries are the pantries they route to.
 
 ## License
 
