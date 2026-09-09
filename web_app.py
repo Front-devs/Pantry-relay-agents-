@@ -104,16 +104,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    default_port = int(os.environ.get("PORT", 8000))
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=8000, help="port to bind server (default: 8000)")
+    parser.add_argument("--port", type=int, default=default_port, help=f"port to bind server (default: {default_port})")
     parser.add_argument("--no-browser", action="store_true", help="do not open browser automatically")
     args = parser.parse_args()
 
     port = args.port
+    host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
     server = None
     for attempt_port in range(port, port + 10):
         try:
-            server = HTTPServer(("127.0.0.1", attempt_port), DashboardHandler)
+            server = HTTPServer((host, attempt_port), DashboardHandler)
             port = attempt_port
             break
         except OSError:
