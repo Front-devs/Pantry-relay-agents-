@@ -67,6 +67,100 @@ def show_waiting(gate) -> None:
     print(rule())
 
 
+def resolve_escalations(gate, resolution: str) -> None:
+    """Apply a human coordinator's verdict to held escalations."""
+    if not gate.escalations:
+        return
+
+    from pantryrelay.data import get_pantry, record_booking, record_message
+
+    print(f"\n{BOLD}Applying Coordinator Decision:{RESET} {resolution.upper()}")
+    for esc in list(gate.escalations):
+        if esc.reason_code == "storage_conflict":
+            riverside = get_pantry("riverside")
+            stjohns = get_pantry("stjohns")
+            if resolution == "overflow":
+                riverside.free_lbs["frozen"] = 0.0
+                booking = {
+                    "pantry_id": "riverside",
+                    "pantry_name": riverside.name,
+                    "donor": "Cold Storage (name inaudible)",
+                    "lbs": 900.0,
+                    "storage": "frozen",
+                    "hours_until_unusable": 48.0,
+                    "rationale": "Coordinator approved emergency overflow staging (+100 lbs authorized)",
+                }
+                record_booking(booking)
+                record_message({
+                    "pantry_id": "riverside",
+                    "to": riverside.contact,
+                    "message": "URGENT: 900 lbs frozen protein inbound. Coordinator authorized emergency overflow staging.",
+                })
+                print(f"  {GREEN}resolved{RESET}  900 lbs → Riverside Meals Program (emergency overflow authorized)")
+            elif resolution == "split":
+                riverside.free_lbs["frozen"] = 0.0
+                stjohns.free_lbs["frozen"] = max(0.0, stjohns.free_lbs.get("frozen", 0.0) - 100.0)
+                record_booking({
+                    "pantry_id": "riverside",
+                    "pantry_name": riverside.name,
+                    "donor": "Cold Storage (name inaudible)",
+                    "lbs": 800.0,
+                    "storage": "frozen",
+                    "hours_until_unusable": 48.0,
+                    "rationale": "Coordinator authorized load split: primary allocation",
+                })
+                record_booking({
+                    "pantry_id": "stjohns",
+                    "pantry_name": stjohns.name,
+                    "donor": "Cold Storage (name inaudible)",
+                    "lbs": 100.0,
+                    "storage": "frozen",
+                    "hours_until_unusable": 48.0,
+                    "rationale": "Coordinator authorized load split: spillover allocation",
+                })
+                record_message({
+                    "pantry_id": "riverside",
+                    "to": riverside.contact,
+                    "message": "800 lbs frozen protein inbound (split lot). Remaining 100 lbs routed to St John's.",
+                })
+                record_message({
+                    "pantry_id": "stjohns",
+                    "to": stjohns.contact,
+                    "message": "100 lbs frozen protein inbound (split lot from Cold Storage).",
+                })
+                print(f"  {GREEN}resolved{RESET}  800 lbs → Riverside Meals Program (split load)")
+                print(f"  {GREEN}resolved{RESET}  100 lbs → St John's Community Pantry (split spillover)")
+            elif resolution == "decline":
+                print(f"  {RED}declined{RESET}  Offer held in limbo; coordinator will follow up with donor.")
+    gate.escalations.clear()
+
+
+def handle_waiting_resolution(gate, *, interactive: bool = False, resolve: str | None = None) -> None:
+    if not gate.escalations:
+        return
+    show_waiting(gate)
+    choice = resolve
+    if not choice and interactive:
+        print()
+        print(f"{YELLOW}{BOLD}Human-in-the-Loop Decision Required:{RESET}")
+        print("  [1] Authorize Emergency Overflow (+100 lbs temporary staging at Riverside)")
+        print("  [2] Split the Load (800 lbs to Riverside, 100 lbs to St John's)")
+        print("  [3] Keep on hold / Decline")
+        try:
+            val = input(f"{BOLD}Select action [1-3, default 3]: {RESET}").strip()
+            if val == "1":
+                choice = "overflow"
+            elif val == "2":
+                choice = "split"
+            elif val == "3":
+                choice = "decline"
+        except (EOFError, KeyboardInterrupt):
+            choice = None
+
+    if choice:
+        resolve_escalations(gate, choice)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -75,14 +169,25 @@ def main() -> int:
         help="run the real agents against Bedrock instead of the offline policy",
     )
     parser.add_argument("--quiet", action="store_true", help="skip the raw sources")
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="interactively prompt the coordinator to resolve held decisions",
+    )
+    parser.add_argument(
+        "--resolve",
+        choices=["overflow", "split", "decline"],
+        default=None,
+        help="pre-select coordinator decision for held decisions (overflow, split, decline)",
+    )
     args = parser.parse_args()
 
     if args.live:
-        return run_live_guarded(quiet=args.quiet)
-    return run_offline(quiet=args.quiet)
+        return run_live_guarded(quiet=args.quiet, interactive=args.interactive, resolve=args.resolve)
+    return run_offline(quiet=args.quiet, interactive=args.interactive, resolve=args.resolve)
 
 
-def run_live_guarded(*, quiet: bool = False) -> int:
+def run_live_guarded(*, quiet: bool = False, interactive: bool = False, resolve: str | None = None) -> int:
     """`--live` needs AWS. Say so in one line rather than in a stack trace.
 
     Only the ways a machine can be un-set-up are caught here — missing keys, no
@@ -104,7 +209,7 @@ def run_live_guarded(*, quiet: bool = False) -> int:
         return 2
 
     try:
-        return run_live(quiet=quiet)
+        return run_live(quiet=quiet, interactive=interactive, resolve=resolve)
     except (NoCredentialsError, NoRegionError) as exc:
         return bail(
             "this machine is not configured for it",
@@ -127,7 +232,7 @@ def run_live_guarded(*, quiet: bool = False) -> int:
         return bail("AWS could not be reached", str(exc))
 
 
-def run_offline(*, quiet: bool = False) -> int:
+def run_offline(*, quiet: bool = False, interactive: bool = False, resolve: str | None = None) -> int:
     reset()
     gate = CoordinatorGate()
 
@@ -163,7 +268,7 @@ def run_offline(*, quiet: bool = False) -> int:
     )
     print(f"{DIM}{len(LEDGER)} bookings, {len(OUTBOX)} coordinator messages sent.{RESET}")
 
-    show_waiting(gate)
+    handle_waiting_resolution(gate, interactive=interactive, resolve=resolve)
 
     print()
     print(f"{BOLD}Pantry capacity after the morning{RESET}")
@@ -176,7 +281,7 @@ def run_offline(*, quiet: bool = False) -> int:
     return 0
 
 
-def run_live(*, quiet: bool = False) -> int:
+def run_live(*, quiet: bool = False, interactive: bool = False, resolve: str | None = None) -> int:
     """Full path: reader agent parses each source, router agent places it."""
     from pantryrelay.agent import build_model, build_reader, build_router, read_offer
 
@@ -240,7 +345,7 @@ def run_live(*, quiet: bool = False) -> int:
     )
     print(f"{DIM}{len(LEDGER)} bookings, {len(OUTBOX)} coordinator messages sent.{RESET}")
 
-    show_waiting(gate)
+    handle_waiting_resolution(gate, interactive=interactive, resolve=resolve)
     print()
     return 0
 

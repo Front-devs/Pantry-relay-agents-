@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PantryRelay — Good Neighbor Agents</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #0a0e14;
+      --bg-surface: #111722;
+      --bg-card: rgba(22, 30, 44, 0.75);
+      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-highlight: rgba(15, 185, 129, 0.3);
+      
+      --primary: #0ea5e9;
+      --primary-glow: rgba(14, 165, 233, 0.25);
+      --gate-teal: #0f5257;
+      --gate-teal-light: #2dd4bf;
+      --accent-terra: #e11d48;
+      
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.2);
+      --warning: #f59e0b;
+      --warning-glow: rgba(245, 158, 11, 0.25);
+      --danger: #ef4444;
+      
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, sans-serif;
+      line-height: 1.5;
+      min-height: 100vh;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(15, 82, 87, 0.15) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(14, 165, 233, 0.1) 0%, transparent 40%);
+    }
+
+    /* Top Navigation Header */
+    header {
+      background: rgba(17, 23, 34, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-subtle);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 38px;
+      height: 38px;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, #0f5257, #0ea5e9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 800;
+      box-shadow: 0 0 16px var(--primary-glow);
+    }
+
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-subtitle {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge-track {
+      background: rgba(14, 165, 233, 0.15);
+      color: var(--primary);
+      border: 1px solid rgba(14, 165, 233, 0.3);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+      font-size: 0.7rem;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      border: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #0f5257, #0ea5e9);
+      color: white;
+      box-shadow: 0 4px 14px var(--primary-glow);
+    }
+
+    .btn-primary:hover {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: var(--bg-surface);
+      color: var(--text-muted);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-card-hover);
+      color: var(--text-main);
+    }
+
+    /* Main Container */
+    main {
+      max-width: 1540px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    /* Metrics Hero Banner */
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      backdrop-filter: blur(8px);
+      box-shadow: var(--shadow-glass);
+      transition: border-color 0.2s;
+    }
+
+    .stat-card:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .stat-value {
+      font-size: 1.85rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+
+    .stat-caption {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    /* 3-Column Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 360px 1fr 380px;
+      gap: 1.75rem;
+      align-items: start;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .panel-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Offer Feed Cards */
+    .feed-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .offer-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      backdrop-filter: blur(8px);
+      transition: all 0.25s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .offer-card:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+    }
+
+    .offer-card.status-routed {
+      border-left: 4px solid var(--success);
+    }
+
+    .offer-card.status-held {
+      border-left: 4px solid var(--warning);
+      background: rgba(245, 158, 11, 0.06);
+    }
+
+    .offer-card.status-resolved {
+      border-left: 4px solid var(--primary);
+    }
+
+    .offer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 6px;
+    }
+
+    .donor-name {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .channel-tag {
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--text-muted);
+    }
+
+    .channel-email { color: #38bdf8; background: rgba(56, 189, 248, 0.12); }
+    .channel-sms { color: #4ade80; background: rgba(74, 222, 128, 0.12); }
+    .channel-voicemail { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+
+    .offer-body {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      max-height: 48px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .offer-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.75rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding-top: 6px;
+    }
+
+    .badge-status {
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+    }
+
+    .badge-pending { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); }
+    .badge-routed { background: var(--success-glow); color: var(--success); }
+    .badge-held { background: var(--warning-glow); color: var(--warning); animation: pulse 2s infinite; }
+    .badge-resolved { background: var(--primary-glow); color: var(--primary); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Center: Pantry Network Cards */
+    .pantry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+
+    .pantry-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      backdrop-filter: blur(8px);
+      box-shadow: var(--shadow-glass);
+      transition: all 0.2s;
+    }
+
+    .pantry-card:hover {
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .pantry-title {
+      font-weight: 700;
+      font-size: 1.05rem;
+      margin-bottom: 2px;
+    }
+
+    .pantry-address {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+
+    .capacity-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .storage-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .storage-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .storage-type {
+      text-transform: capitalize;
+      color: var(--text-muted);
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 9999px;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .fill-ambient { background: linear-gradient(90deg, #38bdf8, #0284c7); }
+    .fill-refrigerated { background: linear-gradient(90deg, #34d399, #059669); }
+    .fill-frozen { background: linear-gradient(90deg, #a78bfa, #7c3aed); }
+
+    /* Right: Gate & Audit Log */
+    .gate-console {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      backdrop-filter: blur(8px);
+      box-shadow: var(--shadow-glass);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .gate-badge-box {
+      background: rgba(15, 82, 87, 0.2);
+      border: 1px solid var(--gate-teal);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+    }
+
+    .gate-badge-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      color: var(--gate-teal-light);
+      font-size: 0.85rem;
+      margin-bottom: 4px;
+    }
+
+    .gate-badge-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .audit-log-list {
+      max-height: 280px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 4px;
+    }
+
+    .audit-entry {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      font-size: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .audit-entry.audit-proceed { border-left: 3px solid var(--success); }
+    .audit-entry.audit-escalate { border-left: 3px solid var(--warning); background: rgba(245, 158, 11, 0.08); }
+    .audit-entry.audit-deny { border-left: 3px solid var(--danger); }
+
+    /* Coordinator Action Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(6px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-backdrop.active {
+      display: flex;
+    }
+
+    .modal-window {
+      background: #151d2a;
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      max-width: 580px;
+      width: 90%;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 40px var(--warning-glow);
+      animation: modalPop 0.3s ease;
+    }
+
+    @keyframes modalPop {
+      from { transform: scale(0.94); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 1rem;
+    }
+
+    .modal-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .modal-subtitle {
+      font-size: 0.8rem;
+      color: var(--warning);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .modal-body {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+      margin-bottom: 1.5rem;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 1rem;
+      border-radius: var(--radius-sm);
+      border-left: 3px solid var(--warning);
+    }
+
+    .modal-options {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .option-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      text-align: left;
+      cursor: pointer;
+      color: var(--text-main);
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .option-btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--primary);
+      transform: translateX(4px);
+    }
+
+    .option-title {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .option-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-logo">🥑</div>
+      <div>
+        <div class="brand-title">PantryRelay</div>
+        <div class="brand-subtitle">
+          <span>Agents for Humans</span>
+          <span>•</span>
+          <span class="badge-track">Good Neighbor Agents</span>
+        </div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-secondary" id="btn-reset" onclick="resetDemo()">↺ Reset</button>
+      <button class="btn btn-primary" id="btn-run" onclick="runSimulation()">▶ Run Morning Triage</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Stats Banner -->
+    <div class="hero-stats">
+      <div class="stat-card">
+        <div class="stat-label">Rescued Food</div>
+        <div class="stat-value" id="stat-total-lbs">2,576 lbs</div>
+        <div class="stat-caption">6 morning donation offers</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Autonomous Triage</div>
+        <div class="stat-value" style="color: var(--success);" id="stat-routed-ratio">5 of 6</div>
+        <div class="stat-caption">Placed without interruption</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Coordinator Gate</div>
+        <div class="stat-value" style="color: var(--warning);" id="stat-held-count">1 Held</div>
+        <div class="stat-caption">Human-in-the-loop interlock</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Verified Tests</div>
+        <div class="stat-value" style="color: var(--primary);" id="stat-tests">73 Passed</div>
+        <div class="stat-caption">0 gate bypasses / red-teamed</div>
+      </div>
+    </div>
+
+    <!-- 3-Column Layout -->
+    <div class="dashboard-grid">
+      
+      <!-- Column 1: Incoming Offers -->
+      <section>
+        <div class="panel-header">
+          <h2 class="panel-title">Inbound Offers (08:00 AM)</h2>
+          <span style="font-size: 0.75rem; color: var(--text-dim);">6 Channels</span>
+        </div>
+        <div class="feed-container" id="offers-list">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+
+      <!-- Column 2: Pantry Network Live Capacity -->
+      <section>
+        <div class="panel-header">
+          <h2 class="panel-title">Oregon Food Bank Network (Portland)</h2>
+          <span style="font-size: 0.75rem; color: var(--text-dim);">Live Warehouse State</span>
+        </div>
+        <div class="pantry-grid" id="pantries-list">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+
+      <!-- Column 3: Coordinator Gate & Live Log -->
+      <section>
+        <div class="panel-header">
+          <h2 class="panel-title">Coordinator Gate</h2>
+          <span style="font-size: 0.75rem; color: var(--gate-teal-light);">InterventionHandler</span>
+        </div>
+        <div class="gate-console">
+          <div class="gate-badge-box">
+            <div class="gate-badge-header">
+              <span>🛡️ Tool Lifecycle Interlock</span>
+            </div>
+            <div class="gate-badge-desc">
+              The agent cannot prompt-inject past the gate because the gate is programmatic on Strands <code>before_tool_call</code>, not an LLM prompt.
+            </div>
+          </div>
+
+          <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">
+            Real-Time Tool Interception Log:
+          </div>
+          <div class="audit-log-list" id="audit-log">
+            <div class="audit-entry" style="color: var(--text-dim);">
+              // Awaiting morning simulation run...
+            </div>
+          </div>
+
+          <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); margin-top: 6px;">
+            Coordinator Outbox (SMS Sent):
+          </div>
+          <div class="audit-log-list" id="outbox-list" style="max-height: 160px;">
+            <div class="audit-entry" style="color: var(--text-dim);">
+              // No coordinator dispatches sent yet.
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Coordinator Intervention Modal -->
+  <div class="modal-backdrop" id="coordinator-modal">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div class="modal-icon">⚠️</div>
+        <div>
+          <div class="modal-subtitle">Gate Interlock Triggered [storage_conflict]</div>
+          <div class="modal-title">Coordinator Decision Required</div>
+        </div>
+      </div>
+      <div class="modal-body" id="modal-explanation">
+        <strong>Cold Storage (name inaudible)</strong> offered <strong>900 lbs of frozen protein</strong>.<br><br>
+        Riverside Meals Program is the best match, but only has <strong>800 lbs of freezer free</strong> (short by 100 lbs). The donor indicated they cannot hold past today.
+      </div>
+      <div class="modal-options">
+        <button class="option-btn" onclick="resolveIntervention('overflow')">
+          <span class="option-title" style="color: var(--success);">1. Authorize Emergency Overflow Staging</span>
+          <span class="option-desc">Approve temporary cold storage rack at Riverside (+100 lbs authorized by human).</span>
+        </button>
+        <button class="option-btn" onclick="resolveIntervention('split')">
+          <span class="option-title" style="color: var(--primary);">2. Override & Split Load Across Pantries</span>
+          <span class="option-desc">Send 800 lbs to Riverside freezer and 100 lbs to St John's Community Pantry freezer.</span>
+        </button>
+        <button class="option-btn" onclick="resolveIntervention('decline')">
+          <span class="option-title" style="color: var(--danger);">3. Decline / Keep On Hold</span>
+          <span class="option-desc">Do not commit capacity; leave offer for manual phone follow-up.</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const INITIAL_OFFERS = [
+      {
+        id: "brightline",
+        donor: "Brightline Bakeries",
+        channel: "email",
+        lbs: 436,
+        summary: "Overbaked bread & pastries from Halsey depot (396 lbs loaves + 40 lbs pastries).",
+        status: "pending"
+      },
+      {
+        id: "nguyen",
+        donor: "Nguyen Family Farm",
+        channel: "sms",
+        lbs: 130,
+        summary: "Leafy greens and produce crates left from cancelled Tuesday market.",
+        status: "pending"
+      },
+      {
+        id: "meridian",
+        donor: "Meridian Logistics",
+        channel: "email",
+        lbs: 620,
+        summary: "Damaged outer packaging dry-goods pallet; inner seals 100% intact.",
+        status: "pending"
+      },
+      {
+        id: "corner",
+        donor: "Corner Market",
+        channel: "sms",
+        lbs: 300,
+        summary: "Old store-brand label beverages and 100% juice boxes.",
+        status: "pending"
+      },
+      {
+        id: "riverroad",
+        donor: "River Road Creamery",
+        channel: "voicemail",
+        lbs: 220,
+        summary: "Chiller noisy compressor; 220 lbs fresh yogurt moving out before Thursday.",
+        status: "pending"
+      },
+      {
+        id: "coldstorage",
+        donor: "Cold Storage (Dev)",
+        channel: "voicemail",
+        lbs: 900,
+        summary: "900 lbs frozen poultry & protein lot defaulted by commercial customer.",
+        status: "pending"
+      }
+    ];
+
+    let currentPantries = [];
+    let currentOffers = JSON.parse(JSON.stringify(INITIAL_OFFERS));
+    let auditEntries = [];
+    let outboxMessages = [];
+
+    async function loadState() {
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        currentPantries = data.pantries;
+        renderPantries();
+        renderOffers();
+      } catch (err) {
+        console.error("Failed loading state:", err);
+      }
+    }
+
+    function renderOffers() {
+      const container = document.getElementById('offers-list');
+      container.innerHTML = currentOffers.map(o => `
+        <div class="offer-card status-${o.status}" id="card-${o.id}">
+          <div class="offer-header">
+            <span class="donor-name">${o.donor}</span>
+            <span class="channel-tag channel-${o.channel}">${o.channel}</span>
+          </div>
+          <div class="offer-body">${o.summary}</div>
+          <div class="offer-footer">
+            <span style="font-weight: 600;">${o.lbs} lbs</span>
+            <span class="badge-status badge-${o.status}">${o.status.toUpperCase()}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderPantries() {
+      const container = document.getElementById('pantries-list');
+      container.innerHTML = currentPantries.map(p => `
+        <div class="pantry-card" id="pantry-${p.id}">
+          <div class="pantry-title">${p.name}</div>
+          <div class="pantry-address">📍 ${p.address} (${p.distance_km} km)</div>
+          <div class="capacity-bars">
+            ${renderBar('ambient', p.free_lbs.ambient || 0, p.total_lbs?.ambient || 1400)}
+            ${p.free_lbs.refrigerated !== undefined ? renderBar('refrigerated', p.free_lbs.refrigerated, p.total_lbs?.refrigerated || 400) : ''}
+            ${p.free_lbs.frozen !== undefined ? renderBar('frozen', p.free_lbs.frozen, p.total_lbs?.frozen || 800) : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderBar(type, free, total) {
+      const usedPct = Math.min(100, Math.max(0, Math.round(((total - free) / total) * 100)));
+      return `
+        <div class="storage-row">
+          <div class="storage-meta">
+            <span class="storage-type">${type}</span>
+            <span><strong>${Math.round(free)}</strong> lbs free / ${total} lbs</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill fill-${type}" style="width: ${usedPct}%;"></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function addAudit(text, type = "proceed") {
+      const log = document.getElementById('audit-log');
+      const item = document.createElement('div');
+      item.className = `audit-entry audit-${type}`;
+      item.textContent = text;
+      log.prepend(item);
+    }
+
+    function addOutbox(to, msg) {
+      const log = document.getElementById('outbox-list');
+      const item = document.createElement('div');
+      item.className = 'audit-entry';
+      item.innerHTML = `<strong>To: ${to}</strong><br>${msg}`;
+      log.prepend(item);
+    }
+
+    async function runSimulation() {
+      document.getElementById('btn-run').disabled = true;
+      document.getElementById('btn-run').textContent = "Triaging...";
+
+      // Step 1: Brightline
+      await sleep(500);
+      currentOffers[0].status = "routed";
+      renderOffers();
+      addAudit("reserve_pickup(Eastside, bakery, 396 lbs) -> PROCEED", "proceed");
+      addAudit("reserve_pickup(Eastside, bakery, 40 lbs) -> PROCEED", "proceed");
+      addOutbox("+1-555-0177", "436 lbs bakery arriving from Brightline Bakeries.");
+      updatePantry("eastside", "ambient", 436);
+
+      // Step 2: Nguyen
+      await sleep(500);
+      currentOffers[1].status = "routed";
+      renderOffers();
+      addAudit("reserve_pickup(St John's, produce, 130 lbs) -> PROCEED", "proceed");
+      addOutbox("+1-555-0142", "130 lbs leafy greens inbound from Nguyen Family Farm.");
+      updatePantry("stjohns", "refrigerated", 130);
+
+      // Step 3: Meridian
+      await sleep(500);
+      currentOffers[2].status = "routed";
+      renderOffers();
+      addAudit("reserve_pickup(Eastside, dry_goods, 620 lbs) -> PROCEED", "proceed");
+      addOutbox("+1-555-0177", "620 lbs shelf-stable dry goods inbound from Meridian.");
+      updatePantry("eastside", "ambient", 620);
+
+      // Step 4: Corner Market
+      await sleep(500);
+      currentOffers[3].status = "routed";
+      renderOffers();
+      addAudit("reserve_pickup(Grace Ave, beverage, 300 lbs) -> PROCEED", "proceed");
+      addOutbox("+1-555-0118", "300 lbs juice & water arriving from Corner Market.");
+      updatePantry("graceave", "ambient", 300);
+
+      // Step 5: River Road Creamery
+      await sleep(500);
+      currentOffers[4].status = "routed";
+      renderOffers();
+      addAudit("reserve_pickup(St John's, dairy, 220 lbs) -> PROCEED", "proceed");
+      addOutbox("+1-555-0142", "220 lbs fresh yogurt inbound from River Road Creamery.");
+      updatePantry("stjohns", "refrigerated", 220);
+
+      // Step 6: Cold Storage -> Gate Interlock Triggered!
+      await sleep(600);
+      currentOffers[5].status = "held";
+      renderOffers();
+      addAudit("reserve_pickup(Riverside, frozen, 900 lbs) -> CONFIRM (storage_conflict)", "escalate");
+      
+      // Open Modal
+      document.getElementById('coordinator-modal').classList.add('active');
+    }
+
+    async function resolveIntervention(action) {
+      document.getElementById('coordinator-modal').classList.remove('active');
+      
+      if (action === 'overflow') {
+        currentOffers[5].status = "resolved";
+        renderOffers();
+        addAudit("Coordinator Approved: Emergency Overflow (+100 lbs rack authorized)", "proceed");
+        addOutbox("+1-555-0193", "URGENT: 900 lbs frozen protein accepted under coordinator overflow staging.");
+        updatePantry("riverside", "frozen", 800);
+      } else if (action === 'split') {
+        currentOffers[5].status = "resolved";
+        renderOffers();
+        addAudit("Coordinator Approved: Split Load (800 lbs Riverside, 100 lbs St John's)", "proceed");
+        addOutbox("+1-555-0193", "800 lbs frozen protein inbound (split lot).");
+        addOutbox("+1-555-0142", "100 lbs frozen protein inbound (split spillover from Cold Storage).");
+        updatePantry("riverside", "frozen", 800);
+        updatePantry("stjohns", "frozen", 100);
+      } else {
+        currentOffers[5].status = "held";
+        renderOffers();
+        addAudit("Coordinator Decision: Declined / Kept on hold for phone contact", "deny");
+      }
+
+      document.getElementById('btn-run').textContent = "✓ Morning Triage Complete";
+      document.getElementById('stat-routed-ratio').textContent = "6 of 6";
+      document.getElementById('stat-held-count').textContent = "0 Held";
+    }
+
+    function updatePantry(id, storage, usedLbs) {
+      const p = currentPantries.find(x => x.id === id);
+      if (p && p.free_lbs[storage] !== undefined) {
+        p.free_lbs[storage] = Math.max(0, p.free_lbs[storage] - usedLbs);
+        renderPantries();
+      }
+    }
+
+    async function resetDemo() {
+      await fetch('/api/reset', { method: 'POST' });
+      currentOffers = JSON.parse(JSON.stringify(INITIAL_OFFERS));
+      document.getElementById('audit-log').innerHTML = `<div class="audit-entry" style="color: var(--text-dim);">// Awaiting morning simulation run...</div>`;
+      document.getElementById('outbox-list').innerHTML = `<div class="audit-entry" style="color: var(--text-dim);">// No coordinator dispatches sent yet.</div>`;
+      document.getElementById('btn-run').disabled = false;
+      document.getElementById('btn-run').textContent = "▶ Run Morning Triage";
+      document.getElementById('stat-routed-ratio').textContent = "5 of 6";
+      document.getElementById('stat-held-count').textContent = "1 Held";
+      loadState();
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    loadState();
+  </script>
+</body>
+</html>

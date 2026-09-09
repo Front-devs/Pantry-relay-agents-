@@ -352,3 +352,61 @@ def test_a_message_rides_on_the_booking_it_belongs_to(gate):
         args={"pantry_id": "eastside", "message": "620 lbs inbound"},
         offer=DRY_GOODS,
     ).action == "allow"
+
+
+# -- coordinator resolution of held escalations -----------------------------
+
+
+def test_coordinator_resolution_overflow_updates_ledger_and_clears_queue(gate):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from run_demo import resolve_escalations
+    from pantryrelay.models import Escalation
+    from pantryrelay.data import get_pantry
+
+    esc = Escalation(
+        reason_code="storage_conflict",
+        summary="Riverside Meals Program cannot hold this load",
+        detail="Needs 900 lbs of frozen space but only 800 lbs is free",
+        proposed_action="reserve_pickup(pantry_id='riverside', quantity_lbs=900.0, storage='frozen')",
+    )
+    gate.escalations.append(esc)
+
+    booked_before = len(LEDGER)
+    resolve_escalations(gate, "overflow")
+
+    assert len(gate.escalations) == 0
+    assert len(LEDGER) == booked_before + 1
+    assert LEDGER[-1]["pantry_id"] == "riverside"
+    assert LEDGER[-1]["lbs"] == 900.0
+    assert "overflow" in LEDGER[-1]["rationale"]
+    assert get_pantry("riverside").free_lbs["frozen"] == 0.0
+
+
+def test_coordinator_resolution_split_allocates_across_pantries(gate):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from run_demo import resolve_escalations
+    from pantryrelay.models import Escalation
+    from pantryrelay.data import get_pantry, reset
+
+    reset()
+    esc = Escalation(
+        reason_code="storage_conflict",
+        summary="Riverside Meals Program cannot hold this load",
+        detail="Needs 900 lbs of frozen space but only 800 lbs is free",
+        proposed_action="reserve_pickup(pantry_id='riverside', quantity_lbs=900.0, storage='frozen')",
+    )
+    gate.escalations.append(esc)
+
+    resolve_escalations(gate, "split")
+
+    assert len(gate.escalations) == 0
+    assert get_pantry("riverside").free_lbs["frozen"] == 0.0
+    assert get_pantry("stjohns").free_lbs["frozen"] == 20.0
+    split_bookings = [b for b in LEDGER if b.get("donor") == "Cold Storage (name inaudible)"]
+    assert len(split_bookings) == 2
+    assert {b["pantry_id"] for b in split_bookings} == {"riverside", "stjohns"}
+

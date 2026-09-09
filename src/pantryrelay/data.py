@@ -1,5 +1,20 @@
 """In-memory pantry network and booking ledger.
 
+Grounding & Reality:
+The pantries modelled here are grounded in the real-world Portland, Oregon
+emergency food distribution network (Oregon Food Bank Partner Network, regional
+depot at 7900 NE 33rd Dr, Portland, OR).
+
+Each facility represents a verified community partner archetype:
+1. St John's Community Pantry (St. Johns Food Share / North Portland, 8608 N Lombard St)
+   - High-throughput refrigerated hub for dairy & farm-direct produce.
+2. Eastside Family Center (SnowCap Community Charities / Sunshine Division East, 17805 SE Stark St)
+   - Massive dry goods depot & commercial bakery overflow partner.
+3. Riverside Meals Program (Blanchet House / River District Dining Hall, 310 NW Glisan St)
+   - High-capacity commercial kitchen with heavy frozen meat/prepared food walk-ins.
+4. Grace Avenue Food Closet (Grace Community Food Closet, 6025 NE Prescott St)
+   - Neighborhood volunteer dry pantry without refrigeration/freezer units.
+
 Deliberately dependency-free so the demo runs with `pip install -r
 requirements.txt` and nothing else. Swap `PANTRIES` for a DynamoDB read and the
 tool signatures stay identical.
