@@ -437,10 +437,10 @@ Entries close **14 September 2026, 5:00 pm Pacific**.
 | Architecture diagram | done — [above](#architecture) |
 | Text description of the project, audience and functionality | done — a Devpost field, written for that form |
 | Demo video, **5 minutes maximum**, public on YouTube or Vimeo | TODO — paste the link here |
-| The video must show it working *and* pitch the problem, the audience, and why it matters | script ready — [DEMO_VIDEO_SCRIPT.md](DEMO_VIDEO_SCRIPT.md) |
+| The video must show it working *and* pitch the problem, the audience, and why it matters | covered by the script; paste the link above when recorded |
 | AWS Builder ID | TODO |
 | Live demo link *(optional; strengthens Technological Implementation)* | done — [pantryrelay.onrender.com](https://pantryrelay.onrender.com) |
-| builder.aws post, "Agents for Humans" in the title *(optional; bonus points)* | TODO — draft in `BUILDER_AWS_POST.md` |
+| builder.aws post, "Agents for Humans" in the title *(optional; bonus points)* | TODO — draft written, needs an AWS Builder ID to publish |
 
 ### Where the evidence is, criterion by criterion
 
