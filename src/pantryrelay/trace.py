@@ -29,6 +29,8 @@ def _pantry_state() -> list[dict[str, Any]]:
         {
             "id": p.id,
             "name": p.name,
+            "address": p.address,
+            "distance_km": p.distance_km,
             "needs": p.needs,
             "contact": p.contact,
             "free_lbs": dict(p.free_lbs),

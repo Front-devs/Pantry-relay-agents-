@@ -632,7 +632,7 @@
       <section>
         <div class="panel-header">
           <h2 class="panel-title">Inbound Offers (08:00 AM)</h2>
-          <span style="font-size: 0.75rem; color: var(--text-dim);">6 Channels</span>
+          <span style="font-size: 0.75rem; color: var(--text-dim);"><span id="offers-channels">3 channels</span></span>
         </div>
         <div class="feed-container" id="offers-list">
           <!-- Populated by JS -->
@@ -832,6 +832,9 @@
         `${Math.round(lbs).toLocaleString()} lbs`;
       document.getElementById('stat-total-caption').textContent =
         `${stats.offers} morning donation offers`;
+      const channels = new Set(trace.offers.map(o => o.channel));
+      document.getElementById('offers-channels').textContent =
+        `${stats.offers} offers · ${channels.size} channels`;
     }
 
     async function runSimulation() {

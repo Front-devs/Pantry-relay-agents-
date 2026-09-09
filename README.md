@@ -386,7 +386,7 @@ marked TODO is not done yet. Entries close **14 September 2026, 5:00 pm Pacific*
 | The video must show the project working *and* pitch (1) the problem (2) who it is for (3) why it matters | TODO |
 | Text description of features and functionality | TODO — a Devpost field, written for that form, not this README pasted in |
 | AWS Builder ID | TODO |
-| Live demo link *(optional; strengthens the Technical Implementation score)* | TODO — paste the URL; deploy steps and configs are in [DEPLOY.md](DEPLOY.md) |
+| Live demo link *(optional; strengthens the Technical Implementation score)* | done — [pantryrelay.onrender.com](https://pantryrelay.onrender.com) (free tier, sleeps when idle; open it a few minutes before judging) |
 | builder.aws blog post *(optional; up to +0.6 on the final score)* | TODO or n/a |
 
 Track fit, for the pitch: Good Neighbor Agents asks for "an agent that helps
