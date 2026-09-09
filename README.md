@@ -31,6 +31,7 @@ drops the raw source excerpt that is otherwise printed under each donor's name.
 
 ```
 $ python run_demo.py --quiet
+
 PantryRelay — Tuesday, 08:41
 ──────────────────────────────────────────────────────────────────────────
 
@@ -53,8 +54,14 @@ River Road Creamery via voicemail
 Cold Storage (name inaudible) via voicemail
   held    Riverside Meals Program cannot hold this load
 
+Harborview Catering via voicemail
+  held    Offer from Harborview Catering was hard to read
+
+Westbrook Grocer via email
+  held    Westbrook Grocer needs a same-day yes or no
+
 ══════════════════════════════════════════════════════════════════════════
-5 of 6 offers routed without interrupting anyone.
+5 of 8 offers routed without interrupting anyone.
 6 bookings, 6 coordinator messages sent.
 
 Waiting on a coordinator
@@ -65,6 +72,19 @@ Waiting on a coordinator
   coordinator's call.
   proposed: reserve_pickup(pantry_id='riverside', donor_name='Cold Storage (name inaudible)', quantity_lbs=900.0, storage='frozen', 
 ──────────────────────────────────────────────────────────────────────────
+  Offer from Harborview Catering was hard to read  [low_confidence_extraction]
+  Extraction confidence 41%, below the 75% bar. Unresolved: Caller's
+  name inaudible.; Weight given as '60, maybe 160' — a factor of
+  nearly three.; Some stock in the walk-in since Friday, some not;
+  caller could not say which.; Message truncated at the 45s limit
+  before the callback window was given.
+  proposed: reserve_pickup(pantry_id='riverside', donor_name='Harborview Catering', quantity_lbs=60.0, storage='refrigerated', hours
+──────────────────────────────────────────────────────────────────────────
+  Westbrook Grocer needs a same-day yes or no  [same_day_commitment]
+  The donor asked for a commitment today. Promising collection on the
+  day binds volunteer time the agent cannot see.
+  proposed: reserve_pickup(pantry_id='graceave', donor_name='Westbrook Grocer', quantity_lbs=180.0, storage='ambient', hours_until_u
+──────────────────────────────────────────────────────────────────────────
 
 Pantry capacity after the morning
   St John's Community Pantry       ambient 900, frozen 120, refrigerated 50 lbs free
@@ -73,13 +93,20 @@ Pantry capacity after the morning
   Grace Avenue Food Closet         ambient 350 lbs free
 ```
 
-Five offers handled silently. The sixth stops, because 900 lbs of frozen protein
-will not fit in 800 lbs of freezer, the donor has said they will not split the
-lot, and deciding whether to bump an existing booking is a human's job.
+Five offers handled silently. Three stop, and each stops for a different reason.
 
-Six bookings out of five offers because the bakery arrived as two line items.
-And Riverside's freezer still reads 800 lbs free in the last block: the gate runs
-*before* the tool, so a held decision leaves nothing to undo.
+The frozen lot stops because 900 lbs will not fit in 800 lbs of freezer, the
+donor has said they will not split it, and bumping an existing booking is a
+human's call. The catering voicemail stops because the transcript lost the
+caller's name and left the weight somewhere between 60 and 160 lbs, which is not
+a reading anyone should act on. The grocer stops for a reason that has nothing to
+do with the food: the store closes today and wants an answer by two, and
+promising same-day collection commits volunteer time the agent cannot see.
+
+Six bookings out of five routed offers because the bakery arrived as two line
+items. And every pantry's capacity in the last block is untouched by the three
+held offers: the gate runs *before* the tool, so a held decision leaves nothing
+to undo.
 
 ## Architecture
 
@@ -177,18 +204,19 @@ Four reasons, and only four:
 | Reason | Trigger | Where you can watch it fire |
 |---|---|---|
 | `storage_conflict` | The pantry physically cannot hold the load | the demo, offer six |
+| `low_confidence_extraction` | The source was too ambiguous to act on | the demo, offer seven |
+| `same_day_commitment` | The donor asked for a decision today — that binds volunteer time the agent cannot see | the demo, offer eight |
 | `thin_expiry_margin` | Too little usable life left after the pantry's notice period | tests only |
-| `same_day_commitment` | The donor asked for a decision today — that binds volunteer time the agent cannot see | tests only |
-| `low_confidence_extraction` | The source was too ambiguous to act on | tests only |
 
-Be clear about that third column: only one of the four can fire on the seeded
-morning. The six offers in `samples/` read at 0.82 confidence or better against a
-0.75 bar, none of them asks for a same-day answer, and the tightest expiry window
-is 48 hours against the network's strictest 4-hour notice period. So
-`storage_conflict` is the only reason this data can reach. The other three have a
-test each in `tests/test_gate.py`, calling `assess()` directly. Adding a
-low-confidence or a same-day offer to `samples/` would put them in the demo too —
-and would hold three offers of eight instead of one of six.
+Be clear about that third column. Three of the four fire on the seeded morning;
+`thin_expiry_margin` is the one this data cannot reach, because the tightest
+expiry window in `samples/` is 24 hours against a strictest notice period of four,
+which clears the six-hour floor comfortably. It has its own test in
+`tests/test_gate.py`, calling `assess()` directly.
+
+`tests/test_gate.py` also pins the coverage itself, so that a later change to the
+fixtures cannot quietly narrow the demo back down to one reason repeated three
+times without a test going red.
 
 Everything else proceeds. That restraint is the product: an agent that escalates
 constantly is just a slower inbox.
@@ -205,8 +233,22 @@ pip install -r requirements.txt
 
 python run_demo.py          # offline — no AWS credentials needed
 python run_demo.py --live   # full agent run against Bedrock
+python web_app.py           # the same morning as a web dashboard
 python -m pytest tests/ -q  # whole suite, no credentials needed
 ```
+
+`run_demo.py --interactive` stops at each held decision and asks you to make it,
+which is the same set of choices the dashboard offers. `--resolve` takes the
+decision up front for a scripted run: `overflow` or `split` for a hold about
+space, `approve` or `decline` for the rest. A decision that does not fit a given
+hold degrades to the nearest one that does, so a single flag is meaningful across
+a mixed queue.
+
+`web_app.py` needs no credentials either, and no packages beyond the standard
+library. It serves the dashboard, and the dashboard asks it for a run rather than
+replaying one: `/api/run` routes every offer through a real `CoordinatorGate` and
+returns the verdicts, `/api/resolve` carries out a coordinator's answer against
+the escalation the gate raised.
 
 Python 3.10+. If `python` is not on your PATH, use whichever launcher is —
 `py -3.14` on Windows, `python3` on most macOS and Linux setups. The commands are
@@ -216,12 +258,19 @@ otherwise identical.
 `build_model` inside `run_live`, so nothing on the offline path and nothing in
 the tests ever constructs a Bedrock client.
 
-Three test files, testing different things. `test_gate.py` calls the escalation
+Four test files, testing different things. `test_gate.py` calls the escalation
 policy directly — the four reasons, the ledger after a held offer, and that every
 booked pound comes out of some pantry's free space. `test_agent_loop.py` puts the
 same gate inside a real Strands agent run against a scripted model, so the
 interlock is tested where it actually runs, and pins that the offline path and
 the live path reach the same verdict call by call.
+
+`test_dashboard_trace.py` covers what the web dashboard is served. The page holds
+no scripted run: it posts to `/api/run`, the server routes every offer through a
+real `CoordinatorGate`, and the page renders the verdicts that came back. These
+tests pin the property that makes that worth doing — that the escalations in the
+payload are the gate's own objects, that a held offer contributes no booking and
+no message, and that a coordinator can always say no.
 
 `test_gate_adversarial.py` is the red-team suite: every test in it is an attempt
 to get a booking or a coordinator message out without a human, and each one fails
@@ -243,11 +292,17 @@ Being straight about this, because it matters for reading the demo:
 
 - **Real:** the agents, the tools, the gate, the intervention wiring, the
   routing policy, the capacity accounting, the tests.
-- **Seeded:** the pantry network in `data.py` (four pantries with live
-  capacity), and the six donation offers in `samples/`. The offers are written
-  to look like the real thing — truncated forwards, approximate weights, an
-  inaudible word in a transcript — because that is the input the agent has to
-  survive.
+- **Seeded, and entirely fictional:** the pantry network in `data.py` (four
+  pantries with live capacity), and the eight donation offers in `samples/`. The
+  pantry names, addresses, phone numbers and capacity figures are invented; no
+  real organisation's data appears anywhere in this repo. What is borrowed from
+  reality is only the *mix* of facility types a metropolitan food network
+  contains — a refrigerated hub, a large ambient depot with no freezer, a
+  commercial kitchen with walk-ins, a volunteer dry closet — because that mix is
+  what gives the routing policy anything to weigh. The offers are written to look
+  like the real thing — truncated forwards, approximate weights, an inaudible
+  word in a transcript, a message that cuts off at the voicemail limit — because
+  that is the input the agent has to survive.
 - **In memory only:** the ledger and the outbox are Python lists that live for
   one process. `reserve_pickup` really does decrement a pantry's capacity, but
   nothing is written to disk and no message reaches a real phone.
@@ -264,15 +319,20 @@ src/pantryrelay/
   gate.py        CoordinatorGate — the InterventionHandler, and the escalation policy
   agent.py       reader and router construction, system prompts, Bedrock model
   routing.py     the deterministic policy the router follows (offline + tests)
+  resolution.py  carrying out a coordinator's answer — one copy, both front ends
+  trace.py       a run of the morning, shaped for the dashboard to render
   fixtures.py    pre-parsed offers matching samples/
-samples/         six raw offers across three channels
+samples/         eight raw offers across three channels
 tests/           test_gate.py       escalation policy and capacity conservation
                  test_agent_loop.py the gate inside a real Strands agent run
                  test_gate_adversarial.py  attacks on the gate, and the ones it
                                     survived
+                 test_dashboard_trace.py   what the web dashboard is served
                  scripted_model.py  a model that plays a fixed script, so the
                                     agent loop is testable without credentials
-run_demo.py      the Tuesday morning
+run_demo.py      the Tuesday morning, in a terminal
+web_app.py       the same morning, in a browser — /api/run drives the real gate
+web/index.html   the dashboard; holds no scripted run of its own
 ```
 
 ## Submission

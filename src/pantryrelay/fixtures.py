@@ -128,8 +128,64 @@ FROZEN = DonationOffer(
     ambiguities=["Facility name inaudible in transcript.", "Weight given as 'give or take'."],
 )
 
+#: A voicemail the transcriber half-lost. The reader's job here is to be honest
+#: that it could not resolve the weight, the storage class or even the donor's
+#: name, rather than to pick the likelier number and move on. Confidence sits
+#: below the gate's 0.75 bar on purpose: this is what an unreadable source
+#: looks like, and no amount of routing skill should paper over it.
+CATERING = DonationOffer(
+    donor_name="Harborview Catering",
+    donor_contact="+1-555-0631",
+    channel="voicemail",
+    pickup_location="Unclear — caller did not finish the address",
+    items=[
+        FoodItem(
+            description="Trays of cooked chicken and rice, plus salad",
+            category="prepared",
+            quantity_lbs=60.0,
+            storage="refrigerated",
+            hours_until_unusable=24.0,
+            notes=(
+                "Weight unresolved: caller said 'sixty pounds? Maybe a hundred "
+                "and sixty'. Lower figure taken; the higher one is not ruled out."
+            ),
+        )
+    ],
+    extraction_confidence=0.41,
+    ambiguities=[
+        "Caller's name inaudible.",
+        "Weight given as '60, maybe 160' — a factor of nearly three.",
+        "Some stock in the walk-in since Friday, some not; caller could not say which.",
+        "Message truncated at the 45s limit before the callback window was given.",
+    ],
+)
+
+#: A store closing today. Nothing here is ambiguous and the load fits — the only
+#: reason this stops is that the donor needs an answer inside the day, which
+#: commits volunteer time the agent cannot see. That is the whole point of the
+#: same-day check: a hold that has nothing to do with the food being wrong.
+GROCERY_CLOSING = DonationOffer(
+    donor_name="Westbrook Grocer",
+    donor_contact="dmoreau@westbrookgrocer.com",
+    channel="email",
+    pickup_location="Prescott St store, loading bay open until 18:00",
+    items=[
+        FoodItem(
+            description="Rice, dried beans, pasta, canned vegetables, cartons",
+            category="dry_goods",
+            quantity_lbs=180.0,
+            storage="ambient",
+            hours_until_unusable=720.0,
+            notes="Counted off the store's own count sheet; sealed, in date, palletised.",
+        )
+    ],
+    needs_same_day_answer=True,
+    extraction_confidence=0.94,
+    ambiguities=["Hard 14:00 cutoff for a yes or no; bay closes 18:00."],
+)
+
 #: In the order they land on a Tuesday morning.
-MORNING = [BAKERY, PRODUCE, DRY_GOODS, BEVERAGE, DAIRY, FROZEN]
+MORNING = [BAKERY, PRODUCE, DRY_GOODS, BEVERAGE, DAIRY, FROZEN, CATERING, GROCERY_CLOSING]
 
 SAMPLE_FILES = [
     "01_email_bakery.txt",
@@ -138,4 +194,6 @@ SAMPLE_FILES = [
     "04_sms_beverage.txt",
     "05_voicemail_dairy.txt",
     "06_voicemail_frozen.txt",
+    "07_voicemail_catering.txt",
+    "08_email_grocery_closing.txt",
 ]

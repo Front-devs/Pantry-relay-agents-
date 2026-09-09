@@ -2,8 +2,8 @@
 """PantryRelay Live Web Dashboard Server.
 
 Provides a visual dashboard for the Agents for Humans hackathon demonstration,
-showcasing the real-time morning triage of the 6 donation offers, the 4 Portland
-food pantries' live capacities, and the Coordinator Gate interlock modal.
+showcasing the morning triage of the seeded donation offers, the four seeded
+pantries' live capacities, and the Coordinator Gate interlock.
 
 Zero external dependencies: uses Python standard library `http.server`.
 
@@ -21,6 +21,7 @@ import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 
 # Ensure src/ is on sys.path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -33,6 +34,14 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 from pantryrelay.data import LEDGER, OUTBOX, PANTRIES, reset  # noqa: E402
+from pantryrelay.gate import CoordinatorGate  # noqa: E402
+from pantryrelay.resolution import apply_resolution, coerce_choice  # noqa: E402
+from pantryrelay.trace import run_morning  # noqa: E402
+
+#: The gate from the most recent /api/run. A coordinator's answer belongs to the
+#: run that raised the question, so the escalations it resolves are the objects
+#: that run actually produced — not a fresh set built to match.
+SESSION: dict[str, Any] = {"gate": None}
 
 WEB_DIR = Path(__file__).parent / "web"
 INDEX_HTML = WEB_DIR / "index.html"
@@ -73,9 +82,55 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path == "/api/reset":
             reset()
-            self.send_json({"status": "ok", "message": "Pantry state reset to 08:00 AM baseline"})
+            SESSION["gate"] = None
+            self.send_json({"status": "ok", "message": "Pantry state reset to the 08:00 baseline"})
+        elif self.path == "/api/run":
+            # The page asks for a run; it does not describe one. Everything the
+            # dashboard renders below comes back out of route_offer and the real
+            # CoordinatorGate, so what a viewer watches is what the gate did.
+            gate = CoordinatorGate()
+            trace = run_morning(gate)
+            SESSION["gate"] = gate
+            self.send_json(trace)
+        elif self.path == "/api/resolve":
+            self.handle_resolve()
         else:
             self.send_error(404, "Endpoint Not Found")
+
+    def read_json(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            return json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return {}
+
+    def handle_resolve(self) -> None:
+        """Carry out a coordinator's answer to one held escalation."""
+        gate = SESSION.get("gate")
+        if gate is None:
+            self.send_json({"error": "no run in progress — start the morning first"})
+            return
+
+        body = self.read_json()
+        choice = str(body.get("choice", "decline"))
+        try:
+            index = int(body.get("id", -1))
+            esc = gate.escalations[index]
+        except (ValueError, TypeError, IndexError):
+            self.send_json({"error": "no held decision with that id"})
+            return
+
+        results = apply_resolution(esc, coerce_choice(esc, choice))
+        gate.escalations.remove(esc)
+        self.send_json({
+            "results": results,
+            "pantries": [
+                {"id": p.id, "name": p.name, "free_lbs": dict(p.free_lbs)} for p in PANTRIES
+            ],
+            "remaining": len(gate.escalations),
+            "bookings": len(LEDGER),
+            "messages": len(OUTBOX),
+        })
 
     def serve_file(self, file_path: Path, content_type: str) -> None:
         if not file_path.exists():

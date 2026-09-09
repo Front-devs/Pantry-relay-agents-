@@ -8,7 +8,7 @@ model as much as for the reader.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -139,4 +139,37 @@ class Escalation(BaseModel):
     ]
     summary: str
     detail: str
+    #: The held call rendered for a human to read.
     proposed_action: str
+    #: The same call as data. ``proposed_action`` is for a coordinator's eyes;
+    #: this is what a resolution path acts on, so that answering an escalation
+    #: works off the load actually held rather than off a hard-coded special
+    #: case. Empty only for escalations raised without a tool call to judge.
+    proposed_args: dict[str, Any] = Field(default_factory=dict)
+    #: Who offered the food. Carried separately because the donor is a property
+    #: of the offer, not of the arguments the model chose.
+    donor_name: str | None = None
+
+    @property
+    def pantry_id(self) -> str | None:
+        value = self.proposed_args.get("pantry_id")
+        return str(value) if value else None
+
+    @property
+    def held_lbs(self) -> float | None:
+        try:
+            return float(self.proposed_args["quantity_lbs"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    @property
+    def storage(self) -> str | None:
+        value = self.proposed_args.get("storage")
+        return str(value) if value else None
+
+    @property
+    def hours_until_unusable(self) -> float | None:
+        try:
+            return float(self.proposed_args["hours_until_unusable"])
+        except (KeyError, TypeError, ValueError):
+            return None

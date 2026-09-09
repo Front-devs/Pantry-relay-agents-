@@ -359,6 +359,14 @@ class CoordinatorGate(InterventionHandler):
         well-formed enough to judge is ``decide()``'s question.
         """
         proposed = f"{tool_name}({', '.join(f'{k}={v!r}' for k, v in args.items())})"
+        # Every escalation below carries the held call twice: once rendered for
+        # a coordinator to read, once as data so a resolution path can act on
+        # the load that was actually held instead of recognising it by name.
+        held = {
+            "proposed_action": proposed,
+            "proposed_args": dict(args),
+            "donor_name": offer.donor_name if offer is not None else None,
+        }
 
         if offer is not None and offer.extraction_confidence < self.min_confidence:
             return Escalation(
@@ -369,7 +377,7 @@ class CoordinatorGate(InterventionHandler):
                     f"{self.min_confidence:.0%} bar. Unresolved: "
                     + ("; ".join(offer.ambiguities) if offer.ambiguities else "not specified")
                 ),
-                proposed_action=proposed,
+                **held,
             )
 
         if offer is not None and offer.needs_same_day_answer:
@@ -380,7 +388,7 @@ class CoordinatorGate(InterventionHandler):
                     "The donor asked for a commitment today. Promising collection on the "
                     "day binds volunteer time the agent cannot see."
                 ),
-                proposed_action=proposed,
+                **held,
             )
 
         pantry_id = args.get("pantry_id")
@@ -403,7 +411,7 @@ class CoordinatorGate(InterventionHandler):
                         f"Placing it on a {storage} shelf would spoil it. Whether the food "
                         "can safely go somewhere warmer is a coordinator's call."
                     ),
-                    proposed_action=proposed,
+                    **held,
                 )
 
             declared = _to_float(args.get("quantity_lbs"), default=0.0) or 0.0
@@ -426,7 +434,7 @@ class CoordinatorGate(InterventionHandler):
                         "to go. Splitting a load, or placing part of it and leaving the "
                         "rest with the donor, is a coordinator's call."
                     ),
-                    proposed_action=proposed,
+                    **held,
                 )
 
             free = pantry.capacity_for(storage)
@@ -440,7 +448,7 @@ class CoordinatorGate(InterventionHandler):
                         "Splitting the load or bumping an existing booking is a "
                         "coordinator's call."
                     ),
-                    proposed_action=proposed,
+                    **held,
                 )
 
             hours = self.authoritative_hours(args, offer)
@@ -456,7 +464,7 @@ class CoordinatorGate(InterventionHandler):
                             f"actually distribute it — under the {self.thin_margin_hours:.0f}h "
                             "floor. Worth a human deciding whether it is still worth the trip."
                         ),
-                        proposed_action=proposed,
+                        **held,
                     )
 
         return None

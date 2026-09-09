@@ -638,7 +638,7 @@
       <!-- Column 2: Pantry Network Live Capacity -->
       <section>
         <div class="panel-header">
-          <h2 class="panel-title">Oregon Food Bank Network (Portland)</h2>
+          <h2 class="panel-title">Pantry Network <span style="opacity:.6;font-weight:400">(seeded)</span></h2>
           <span style="font-size: 0.75rem; color: var(--text-dim);">Live Warehouse State</span>
         </div>
         <div class="pantry-grid" id="pantries-list">
@@ -691,112 +691,75 @@
       <div class="modal-header">
         <div class="modal-icon">⚠️</div>
         <div>
-          <div class="modal-subtitle">Gate Interlock Triggered [storage_conflict]</div>
-          <div class="modal-title">Coordinator Decision Required</div>
+          <div class="modal-subtitle" id="modal-reason">Gate interlock triggered</div>
+          <div class="modal-title">Coordinator decision required</div>
         </div>
       </div>
-      <div class="modal-body" id="modal-explanation">
-        <strong>Cold Storage (name inaudible)</strong> offered <strong>900 lbs of frozen protein</strong>.<br><br>
-        Riverside Meals Program is the best match, but only has <strong>800 lbs of freezer free</strong> (short by 100 lbs). The donor indicated they cannot hold past today.
-      </div>
-      <div class="modal-options">
-        <button class="option-btn" onclick="resolveIntervention('overflow')">
-          <span class="option-title" style="color: var(--success);">1. Authorize Emergency Overflow Staging</span>
-          <span class="option-desc">Approve temporary cold storage rack at Riverside (+100 lbs authorized by human).</span>
-        </button>
-        <button class="option-btn" onclick="resolveIntervention('split')">
-          <span class="option-title" style="color: var(--primary);">2. Override & Split Load Across Pantries</span>
-          <span class="option-desc">Send 800 lbs to Riverside freezer and 100 lbs to St John's Community Pantry freezer.</span>
-        </button>
-        <button class="option-btn" onclick="resolveIntervention('decline')">
-          <span class="option-title" style="color: var(--danger);">3. Decline / Keep On Hold</span>
-          <span class="option-desc">Do not commit capacity; leave offer for manual phone follow-up.</span>
-        </button>
+      <!-- Filled from the escalation the gate actually raised. Nothing about
+           this decision is written into the page ahead of time. -->
+      <div class="modal-body" id="modal-explanation"></div>
+      <div class="modal-options" id="modal-options"></div>
+      <div class="modal-body" style="opacity:.65;font-size:12px;border-top:1px solid rgba(128,128,128,.25);margin-top:4px;padding-top:10px">
+        <span id="modal-queue"></span>
       </div>
     </div>
   </div>
 
   <script>
-    const INITIAL_OFFERS = [
-      {
-        id: "brightline",
-        donor: "Brightline Bakeries",
-        channel: "email",
-        lbs: 436,
-        summary: "Overbaked bread & pastries from Halsey depot (396 lbs loaves + 40 lbs pastries).",
-        status: "pending"
-      },
-      {
-        id: "nguyen",
-        donor: "Nguyen Family Farm",
-        channel: "sms",
-        lbs: 130,
-        summary: "Leafy greens and produce crates left from cancelled Tuesday market.",
-        status: "pending"
-      },
-      {
-        id: "meridian",
-        donor: "Meridian Logistics",
-        channel: "email",
-        lbs: 620,
-        summary: "Damaged outer packaging dry-goods pallet; inner seals 100% intact.",
-        status: "pending"
-      },
-      {
-        id: "corner",
-        donor: "Corner Market",
-        channel: "sms",
-        lbs: 300,
-        summary: "Old store-brand label beverages and 100% juice boxes.",
-        status: "pending"
-      },
-      {
-        id: "riverroad",
-        donor: "River Road Creamery",
-        channel: "voicemail",
-        lbs: 220,
-        summary: "Chiller noisy compressor; 220 lbs fresh yogurt moving out before Thursday.",
-        status: "pending"
-      },
-      {
-        id: "coldstorage",
-        donor: "Cold Storage (Dev)",
-        channel: "voicemail",
-        lbs: 900,
-        summary: "900 lbs frozen poultry & protein lot defaulted by commercial customer.",
-        status: "pending"
-      }
-    ];
+    /* Everything this page shows comes back from the server, which runs the
+       real routing policy through the real CoordinatorGate. There is no
+       scripted morning in here: the page asks for a run and renders whatever
+       the gate decided, including which offers it refused to handle alone.
+       If you change the seeded offers or the escalation policy, this page
+       changes with them, because it never knew the answer in advance. */
 
     let currentPantries = [];
-    let currentOffers = JSON.parse(JSON.stringify(INITIAL_OFFERS));
-    let auditEntries = [];
-    let outboxMessages = [];
+    let currentOffers = [];
+    let pendingEscalations = [];
+    let totals = {};
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+
+    async function api(path, body) {
+      const res = await fetch(path, body ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      } : { method: 'POST' });
+      return res.json();
+    }
 
     async function loadState() {
       try {
         const res = await fetch('/api/state');
         const data = await res.json();
         currentPantries = data.pantries;
+        data.pantries.forEach(p => { totals[p.id] = p.total_lbs || {}; });
         renderPantries();
         renderOffers();
       } catch (err) {
-        console.error("Failed loading state:", err);
+        console.error('[PantryRelay] failed loading state:', err);
       }
     }
 
     function renderOffers() {
       const container = document.getElementById('offers-list');
+      if (!currentOffers.length) {
+        container.innerHTML = `<div class="audit-entry" style="color: var(--text-dim);">// Run the morning to load the inbox.</div>`;
+        return;
+      }
       container.innerHTML = currentOffers.map(o => `
-        <div class="offer-card status-${o.status}" id="card-${o.id}">
+        <div class="offer-card status-${esc(o.status)}">
           <div class="offer-header">
-            <span class="donor-name">${o.donor}</span>
-            <span class="channel-tag channel-${o.channel}">${o.channel}</span>
+            <span class="donor-name">${esc(o.donor)}</span>
+            <span class="channel-tag channel-${esc(o.channel)}">${esc(o.channel)}</span>
           </div>
-          <div class="offer-body">${o.summary}</div>
+          <div class="offer-body">${esc(o.summary)}</div>
           <div class="offer-footer">
-            <span style="font-weight: 600;">${o.lbs} lbs</span>
-            <span class="badge-status badge-${o.status}">${o.status.toUpperCase()}</span>
+            <span style="font-weight: 600;">${Math.round(o.lbs)} lbs</span>
+            <span class="badge-status badge-${esc(o.status)}">${esc(o.status).toUpperCase()}</span>
           </div>
         </div>
       `).join('');
@@ -804,20 +767,23 @@
 
     function renderPantries() {
       const container = document.getElementById('pantries-list');
-      container.innerHTML = currentPantries.map(p => `
-        <div class="pantry-card" id="pantry-${p.id}">
-          <div class="pantry-title">${p.name}</div>
-          <div class="pantry-address">📍 ${p.address} (${p.distance_km} km)</div>
+      container.innerHTML = currentPantries.map(p => {
+        const total = totals[p.id] || {};
+        return `
+        <div class="pantry-card" id="pantry-${esc(p.id)}">
+          <div class="pantry-title">${esc(p.name)}</div>
+          <div class="pantry-address">📍 ${esc(p.address || '')} ${p.distance_km ? '(' + p.distance_km + ' km)' : ''}</div>
           <div class="capacity-bars">
-            ${renderBar('ambient', p.free_lbs.ambient || 0, p.total_lbs?.ambient || 1400)}
-            ${p.free_lbs.refrigerated !== undefined ? renderBar('refrigerated', p.free_lbs.refrigerated, p.total_lbs?.refrigerated || 400) : ''}
-            ${p.free_lbs.frozen !== undefined ? renderBar('frozen', p.free_lbs.frozen, p.total_lbs?.frozen || 800) : ''}
+            ${bar('ambient', p.free_lbs.ambient, total.ambient)}
+            ${bar('refrigerated', p.free_lbs.refrigerated, total.refrigerated)}
+            ${bar('frozen', p.free_lbs.frozen, total.frozen)}
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
     }
 
-    function renderBar(type, free, total) {
+    function bar(type, free, total) {
+      if (free === undefined || !total) return '';
       const usedPct = Math.min(100, Math.max(0, Math.round(((total - free) / total) * 100)));
       return `
         <div class="storage-row">
@@ -828,11 +794,10 @@
           <div class="progress-track">
             <div class="progress-fill fill-${type}" style="width: ${usedPct}%;"></div>
           </div>
-        </div>
-      `;
+        </div>`;
     }
 
-    function addAudit(text, type = "proceed") {
+    function addAudit(text, type = 'proceed') {
       const log = document.getElementById('audit-log');
       const item = document.createElement('div');
       item.className = `audit-entry audit-${type}`;
@@ -844,110 +809,138 @@
       const log = document.getElementById('outbox-list');
       const item = document.createElement('div');
       item.className = 'audit-entry';
-      item.innerHTML = `<strong>To: ${to}</strong><br>${msg}`;
+      item.innerHTML = `<strong>To: ${esc(to)}</strong><br>${esc(msg)}`;
       log.prepend(item);
     }
 
+    function setStats(stats) {
+      document.getElementById('stat-routed-ratio').textContent =
+        `${stats.routed} of ${stats.offers}`;
+      document.getElementById('stat-held-count').textContent =
+        `${stats.held} Held`;
+    }
+
     async function runSimulation() {
-      document.getElementById('btn-run').disabled = true;
-      document.getElementById('btn-run').textContent = "Triaging...";
+      const btn = document.getElementById('btn-run');
+      btn.disabled = true;
+      btn.textContent = 'Triaging...';
+      document.getElementById('audit-log').innerHTML = '';
+      document.getElementById('outbox-list').innerHTML = '';
 
-      // Step 1: Brightline
-      await sleep(500);
-      currentOffers[0].status = "routed";
-      renderOffers();
-      addAudit("reserve_pickup(Eastside, bakery, 396 lbs) -> PROCEED", "proceed");
-      addAudit("reserve_pickup(Eastside, bakery, 40 lbs) -> PROCEED", "proceed");
-      addOutbox("+1-555-0177", "436 lbs bakery arriving from Brightline Bakeries.");
-      updatePantry("eastside", "ambient", 436);
+      let trace;
+      try {
+        trace = await api('/api/run');
+      } catch (err) {
+        addAudit('Could not reach the routing service. Is web_app.py running?', 'deny');
+        btn.disabled = false;
+        btn.textContent = '▶ Run Morning Triage';
+        return;
+      }
 
-      // Step 2: Nguyen
-      await sleep(500);
-      currentOffers[1].status = "routed";
+      currentOffers = trace.offers.map(o => ({ ...o }));
+      pendingEscalations = trace.escalations;
       renderOffers();
-      addAudit("reserve_pickup(St John's, produce, 130 lbs) -> PROCEED", "proceed");
-      addOutbox("+1-555-0142", "130 lbs leafy greens inbound from Nguyen Family Farm.");
-      updatePantry("stjohns", "refrigerated", 130);
 
-      // Step 3: Meridian
-      await sleep(500);
-      currentOffers[2].status = "routed";
-      renderOffers();
-      addAudit("reserve_pickup(Eastside, dry_goods, 620 lbs) -> PROCEED", "proceed");
-      addOutbox("+1-555-0177", "620 lbs shelf-stable dry goods inbound from Meridian.");
-      updatePantry("eastside", "ambient", 620);
+      /* Paced for a viewer, but the verdicts were already decided by the gate
+         before the first line was drawn. The delay is presentation; the
+         content is not. */
+      for (let i = 0; i < trace.offers.length; i++) {
+        const offer = trace.offers[i];
+        await sleep(420);
+        offer.events.forEach(e => addAudit(e.text, e.verdict));
+        offer.messages.forEach(m => addOutbox(m.to, m.message));
+        currentPantries = trace.pantries;
+        renderPantries();
+        renderOffers();
+      }
 
-      // Step 4: Corner Market
-      await sleep(500);
-      currentOffers[3].status = "routed";
-      renderOffers();
-      addAudit("reserve_pickup(Grace Ave, beverage, 300 lbs) -> PROCEED", "proceed");
-      addOutbox("+1-555-0118", "300 lbs juice & water arriving from Corner Market.");
-      updatePantry("graceave", "ambient", 300);
+      setStats(trace.stats);
+      btn.textContent = trace.stats.held
+        ? `${trace.stats.held} decision${trace.stats.held > 1 ? 's' : ''} waiting`
+        : '✓ Morning triage complete';
 
-      // Step 5: River Road Creamery
-      await sleep(500);
-      currentOffers[4].status = "routed";
-      renderOffers();
-      addAudit("reserve_pickup(St John's, dairy, 220 lbs) -> PROCEED", "proceed");
-      addOutbox("+1-555-0142", "220 lbs fresh yogurt inbound from River Road Creamery.");
-      updatePantry("stjohns", "refrigerated", 220);
+      if (pendingEscalations.length) {
+        await sleep(400);
+        openEscalation(0);
+      }
+    }
 
-      // Step 6: Cold Storage -> Gate Interlock Triggered!
-      await sleep(600);
-      currentOffers[5].status = "held";
-      renderOffers();
-      addAudit("reserve_pickup(Riverside, frozen, 900 lbs) -> CONFIRM (storage_conflict)", "escalate");
-      
-      // Open Modal
+    function openEscalation(queueIndex) {
+      const e = pendingEscalations[queueIndex];
+      if (!e) {
+        document.getElementById('coordinator-modal').classList.remove('active');
+        document.getElementById('btn-run').textContent = '✓ Morning triage complete';
+        return;
+      }
+      document.getElementById('modal-reason').textContent =
+        `Gate interlock triggered [${e.reason_code}]`;
+      document.getElementById('modal-explanation').innerHTML =
+        `<strong>${esc(e.summary)}</strong><br><br>${esc(e.detail)}`;
+      document.getElementById('modal-queue').textContent =
+        `Held decision ${queueIndex + 1} of ${pendingEscalations.length}. ` +
+        `Proposed: ${e.proposed_action}`;
+
+      const palette = { overflow: 'var(--success)', split: 'var(--primary)', approve: 'var(--success)', decline: 'var(--danger)' };
+      document.getElementById('modal-options').innerHTML = e.choices.map((c, i) => `
+        <button class="option-btn" data-choice="${esc(c.key)}">
+          <span class="option-title" style="color: ${palette[c.key] || 'var(--primary)'};">${i + 1}. ${esc(c.label)}</span>
+          <span class="option-desc">${esc(c.key)}</span>
+        </button>
+      `).join('');
+      document.querySelectorAll('#modal-options .option-btn').forEach(btn => {
+        btn.onclick = () => resolveIntervention(e.id, btn.dataset.choice);
+      });
       document.getElementById('coordinator-modal').classList.add('active');
     }
 
-    async function resolveIntervention(action) {
+    async function resolveIntervention(escalationId, choice) {
       document.getElementById('coordinator-modal').classList.remove('active');
-      
-      if (action === 'overflow') {
-        currentOffers[5].status = "resolved";
-        renderOffers();
-        addAudit("Coordinator Approved: Emergency Overflow (+100 lbs rack authorized)", "proceed");
-        addOutbox("+1-555-0193", "URGENT: 900 lbs frozen protein accepted under coordinator overflow staging.");
-        updatePantry("riverside", "frozen", 800);
-      } else if (action === 'split') {
-        currentOffers[5].status = "resolved";
-        renderOffers();
-        addAudit("Coordinator Approved: Split Load (800 lbs Riverside, 100 lbs St John's)", "proceed");
-        addOutbox("+1-555-0193", "800 lbs frozen protein inbound (split lot).");
-        addOutbox("+1-555-0142", "100 lbs frozen protein inbound (split spillover from Cold Storage).");
-        updatePantry("riverside", "frozen", 800);
-        updatePantry("stjohns", "frozen", 100);
-      } else {
-        currentOffers[5].status = "held";
-        renderOffers();
-        addAudit("Coordinator Decision: Declined / Kept on hold for phone contact", "deny");
+
+      const res = await api('/api/resolve', { id: escalationId, choice });
+      if (res.error) {
+        addAudit(`Resolution failed: ${res.error}`, 'deny');
+        return;
       }
 
-      document.getElementById('btn-run').textContent = "✓ Morning Triage Complete";
-      document.getElementById('stat-routed-ratio').textContent = "6 of 6";
-      document.getElementById('stat-held-count').textContent = "0 Held";
-    }
+      res.results.forEach(r => {
+        if (r.outcome === 'resolved') {
+          addAudit(`Coordinator: ${r.note} — ${Math.round(r.lbs)} lbs to ${r.pantry_name}`, 'proceed');
+        } else {
+          addAudit(`Coordinator: ${r.summary} — ${r.note}`, 'deny');
+        }
+      });
 
-    function updatePantry(id, storage, usedLbs) {
-      const p = currentPantries.find(x => x.id === id);
-      if (p && p.free_lbs[storage] !== undefined) {
-        p.free_lbs[storage] = Math.max(0, p.free_lbs[storage] - usedLbs);
-        renderPantries();
+      res.pantries.forEach(updated => {
+        const p = currentPantries.find(x => x.id === updated.id);
+        if (p) p.free_lbs = updated.free_lbs;
+      });
+      renderPantries();
+
+      const done = pendingEscalations.findIndex(e => e.id === escalationId);
+      if (done >= 0) pendingEscalations.splice(done, 1);
+      // Ids are positions in the gate's queue, which shifts as holds clear.
+      pendingEscalations.forEach((e, i) => { e.id = i; });
+
+      const held = pendingEscalations.length;
+      document.getElementById('stat-held-count').textContent = `${held} Held`;
+      if (held) {
+        await sleep(350);
+        openEscalation(0);
+      } else {
+        document.getElementById('btn-run').textContent = '✓ Morning triage complete';
       }
     }
 
     async function resetDemo() {
-      await fetch('/api/reset', { method: 'POST' });
-      currentOffers = JSON.parse(JSON.stringify(INITIAL_OFFERS));
-      document.getElementById('audit-log').innerHTML = `<div class="audit-entry" style="color: var(--text-dim);">// Awaiting morning simulation run...</div>`;
+      await api('/api/reset');
+      currentOffers = [];
+      pendingEscalations = [];
+      document.getElementById('audit-log').innerHTML = `<div class="audit-entry" style="color: var(--text-dim);">// Awaiting morning triage run...</div>`;
       document.getElementById('outbox-list').innerHTML = `<div class="audit-entry" style="color: var(--text-dim);">// No coordinator dispatches sent yet.</div>`;
       document.getElementById('btn-run').disabled = false;
-      document.getElementById('btn-run').textContent = "▶ Run Morning Triage";
-      document.getElementById('stat-routed-ratio').textContent = "5 of 6";
-      document.getElementById('stat-held-count').textContent = "1 Held";
+      document.getElementById('btn-run').textContent = '▶ Run Morning Triage';
+      document.getElementById('stat-routed-ratio').textContent = '—';
+      document.getElementById('stat-held-count').textContent = '—';
       loadState();
     }
 

@@ -1,19 +1,22 @@
 """In-memory pantry network and booking ledger.
 
-Grounding & Reality:
-The pantries modelled here are grounded in the real-world Portland, Oregon
-emergency food distribution network (Oregon Food Bank Partner Network, regional
-depot at 7900 NE 33rd Dr, Portland, OR).
+What this is, and what it is not:
 
-Each facility represents a verified community partner archetype:
-1. St John's Community Pantry (St. Johns Food Share / North Portland, 8608 N Lombard St)
-   - High-throughput refrigerated hub for dairy & farm-direct produce.
-2. Eastside Family Center (SnowCap Community Charities / Sunshine Division East, 17805 SE Stark St)
-   - Massive dry goods depot & commercial bakery overflow partner.
-3. Riverside Meals Program (Blanchet House / River District Dining Hall, 310 NW Glisan St)
-   - High-capacity commercial kitchen with heavy frozen meat/prepared food walk-ins.
-4. Grace Avenue Food Closet (Grace Community Food Closet, 6025 NE Prescott St)
-   - Neighborhood volunteer dry pantry without refrigeration/freezer units.
+Every pantry below is FICTIONAL. The names, street addresses, phone numbers and
+capacity figures are invented, and no real organisation's data appears here. Do
+not cite this module as evidence about any actual food bank.
+
+What is borrowed from reality is only the *shape* of a metropolitan emergency
+food network — the observation that such a network mixes facility types rather
+than repeating one, which is what makes routing a decision at all:
+
+1. St John's Community Pantry  — a refrigerated hub taking dairy and produce.
+2. Eastside Family Center      — a large ambient depot, no freezer at all.
+3. Riverside Meals Program     — a commercial kitchen with deep freezer walk-ins.
+4. Grace Avenue Food Closet    — a volunteer dry pantry, no cold storage at all.
+
+Those four archetypes are why the gate has anything to weigh. The numbers
+attached to them are chosen to exercise the routing policy, not measured.
 
 Deliberately dependency-free so the demo runs with `pip install -r
 requirements.txt` and nothing else. Swap `PANTRIES` for a DynamoDB read and the

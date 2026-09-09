@@ -29,6 +29,12 @@ for _stream in (sys.stdout, sys.stderr):
 from pantryrelay import CoordinatorGate, route_offer  # noqa: E402
 from pantryrelay.data import LEDGER, OUTBOX, PANTRIES, reset  # noqa: E402
 from pantryrelay.fixtures import MORNING, SAMPLE_FILES  # noqa: E402
+from pantryrelay.resolution import (  # noqa: E402
+    CHOICE_LABELS,
+    apply_resolution,
+    choices_for,
+    coerce_choice,
+)
 
 SAMPLES_DIR = Path(__file__).parent / "samples"
 
@@ -67,71 +73,33 @@ def show_waiting(gate) -> None:
     print(rule())
 
 
+def _render(result: dict) -> str:
+    """One line of terminal output for one thing a coordinator's answer did."""
+    if result["outcome"] == "resolved":
+        note = result["note"]
+        tail = " (split load)" if "primary" in note else (
+            " (split spillover)" if "spillover" in note else (
+                f" ({note})" if "overflow" in note else " (authorised)"
+            )
+        )
+        return (
+            f"  {GREEN}resolved{RESET}  {result['lbs']:.0f} lbs → "
+            f"{result['pantry_name']}{tail}"
+        )
+    colour = RED
+    label = "declined" if result["outcome"] == "declined" else "stuck   "
+    return f"  {colour}{label}{RESET}  {result['summary']} — {result['note']}"
+
+
 def resolve_escalations(gate, resolution: str) -> None:
-    """Apply a human coordinator's verdict to held escalations."""
+    """Apply a coordinator's verdict to every held escalation."""
     if not gate.escalations:
         return
 
-    from pantryrelay.data import get_pantry, record_booking, record_message
-
     print(f"\n{BOLD}Applying Coordinator Decision:{RESET} {resolution.upper()}")
     for esc in list(gate.escalations):
-        if esc.reason_code == "storage_conflict":
-            riverside = get_pantry("riverside")
-            stjohns = get_pantry("stjohns")
-            if resolution == "overflow":
-                riverside.free_lbs["frozen"] = 0.0
-                booking = {
-                    "pantry_id": "riverside",
-                    "pantry_name": riverside.name,
-                    "donor": "Cold Storage (name inaudible)",
-                    "lbs": 900.0,
-                    "storage": "frozen",
-                    "hours_until_unusable": 48.0,
-                    "rationale": "Coordinator approved emergency overflow staging (+100 lbs authorized)",
-                }
-                record_booking(booking)
-                record_message({
-                    "pantry_id": "riverside",
-                    "to": riverside.contact,
-                    "message": "URGENT: 900 lbs frozen protein inbound. Coordinator authorized emergency overflow staging.",
-                })
-                print(f"  {GREEN}resolved{RESET}  900 lbs → Riverside Meals Program (emergency overflow authorized)")
-            elif resolution == "split":
-                riverside.free_lbs["frozen"] = 0.0
-                stjohns.free_lbs["frozen"] = max(0.0, stjohns.free_lbs.get("frozen", 0.0) - 100.0)
-                record_booking({
-                    "pantry_id": "riverside",
-                    "pantry_name": riverside.name,
-                    "donor": "Cold Storage (name inaudible)",
-                    "lbs": 800.0,
-                    "storage": "frozen",
-                    "hours_until_unusable": 48.0,
-                    "rationale": "Coordinator authorized load split: primary allocation",
-                })
-                record_booking({
-                    "pantry_id": "stjohns",
-                    "pantry_name": stjohns.name,
-                    "donor": "Cold Storage (name inaudible)",
-                    "lbs": 100.0,
-                    "storage": "frozen",
-                    "hours_until_unusable": 48.0,
-                    "rationale": "Coordinator authorized load split: spillover allocation",
-                })
-                record_message({
-                    "pantry_id": "riverside",
-                    "to": riverside.contact,
-                    "message": "800 lbs frozen protein inbound (split lot). Remaining 100 lbs routed to St John's.",
-                })
-                record_message({
-                    "pantry_id": "stjohns",
-                    "to": stjohns.contact,
-                    "message": "100 lbs frozen protein inbound (split lot from Cold Storage).",
-                })
-                print(f"  {GREEN}resolved{RESET}  800 lbs → Riverside Meals Program (split load)")
-                print(f"  {GREEN}resolved{RESET}  100 lbs → St John's Community Pantry (split spillover)")
-            elif resolution == "decline":
-                print(f"  {RED}declined{RESET}  Offer held in limbo; coordinator will follow up with donor.")
+        for result in apply_resolution(esc, coerce_choice(esc, resolution)):
+            print(_render(result))
     gate.escalations.clear()
 
 
@@ -141,19 +109,17 @@ def handle_waiting_resolution(gate, *, interactive: bool = False, resolve: str |
     show_waiting(gate)
     choice = resolve
     if not choice and interactive:
+        # Options are built from the first hold, so the prompt describes the
+        # decision actually waiting rather than a fixed menu.
+        options = choices_for(gate.escalations[0])
         print()
         print(f"{YELLOW}{BOLD}Human-in-the-Loop Decision Required:{RESET}")
-        print("  [1] Authorize Emergency Overflow (+100 lbs temporary staging at Riverside)")
-        print("  [2] Split the Load (800 lbs to Riverside, 100 lbs to St John's)")
-        print("  [3] Keep on hold / Decline")
+        for i, option in enumerate(options, start=1):
+            print(f"  [{i}] {CHOICE_LABELS[option]}")
         try:
-            val = input(f"{BOLD}Select action [1-3, default 3]: {RESET}").strip()
-            if val == "1":
-                choice = "overflow"
-            elif val == "2":
-                choice = "split"
-            elif val == "3":
-                choice = "decline"
+            val = input(f"{BOLD}Select action [1-{len(options)}, default {len(options)}]: {RESET}").strip()
+            index = int(val) - 1 if val.isdigit() else len(options) - 1
+            choice = options[index] if 0 <= index < len(options) else options[-1]
         except (EOFError, KeyboardInterrupt):
             choice = None
 
@@ -176,9 +142,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--resolve",
-        choices=["overflow", "split", "decline"],
+        choices=["overflow", "split", "approve", "decline"],
         default=None,
-        help="pre-select coordinator decision for held decisions (overflow, split, decline)",
+        help=(
+            "pre-select the coordinator decision. overflow and split apply to holds "
+            "about space; approve and decline apply to the rest. A decision that does "
+            "not fit a given hold degrades to the nearest one that does."
+        ),
     )
     args = parser.parse_args()
 
