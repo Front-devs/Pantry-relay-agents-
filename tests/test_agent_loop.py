@@ -22,7 +22,7 @@ from scripted_model import ScriptedModel, call, say  # noqa: E402
 from strands import Agent, tool  # noqa: E402
 
 from pantryrelay.data import LEDGER, OUTBOX, get_pantry, reset  # noqa: E402
-from pantryrelay.fixtures import DRY_GOODS, FROZEN  # noqa: E402
+from pantryrelay.fixtures import DAIRY, DRY_GOODS, FROZEN  # noqa: E402
 from pantryrelay.gate import CoordinatorGate  # noqa: E402
 from pantryrelay.routing import _call  # noqa: E402
 from pantryrelay.tools import (  # noqa: E402
@@ -492,7 +492,21 @@ NEGATIVE = {**OVERSIZED, "quantity_lbs": -500.0}
 ZERO = {**OVERSIZED, "quantity_lbs": 0.0}
 WARM_SHELF = {**OVERSIZED, "pantry_id": "eastside", "storage": "ambient"}
 INFLATED = {**GOOD, "hours_until_unusable": 8760.0}
+SHAVED = {**OVERSIZED, "quantity_lbs": 700.0}
+PADDED = {**GOOD, "quantity_lbs": 900.0}
 MESSAGE = {"pantry_id": "eastside", "message": "620 lbs inbound"}
+
+DAIRY_AT = {
+    pantry_id: {
+        "pantry_id": pantry_id,
+        "donor_name": DAIRY.donor_name,
+        "quantity_lbs": 220.0,
+        "storage": "refrigerated",
+        "hours_until_unusable": 72.0,
+        "rationale": "lists dairy as a current need",
+    }
+    for pantry_id in ("stjohns", "riverside")
+}
 
 URGENT_OFFER = DRY_GOODS.model_copy(
     update={"items": [DRY_GOODS.items[0].model_copy(update={"hours_until_unusable": 3.0})]}
@@ -509,6 +523,13 @@ AGREEMENT_GRID = [
     ("an over-capacity load", FROZEN, [("reserve_pickup", OVERSIZED)]),
     ("frozen onto a warm shelf", FROZEN, [("reserve_pickup", WARM_SHELF)]),
     ("an inflated expiry claim", URGENT_OFFER, [("reserve_pickup", INFLATED)]),
+    ("a shaved weight", FROZEN, [("reserve_pickup", SHAVED)]),
+    ("a padded weight", DRY_GOODS, [("reserve_pickup", PADDED)]),
+    (
+        "one load promised to two pantries",
+        DAIRY,
+        [("reserve_pickup", DAIRY_AT["stjohns"]), ("reserve_pickup", DAIRY_AT["riverside"])],
+    ),
     ("an offer read badly", MURKY_OFFER, [("reserve_pickup", GOOD)]),
     ("a donor owed an answer today", SAME_DAY_OFFER, [("reserve_pickup", GOOD)]),
     ("a message with no booking", DRY_GOODS, [("notify_pantry_coordinator", MESSAGE)]),
@@ -538,7 +559,12 @@ def verdicts_offline(offer, calls):
         verdict = gate.decide(tool_name=name, args=args, offer=offer)
         seen.append(verdict.action)
         if verdict.action == "allow":
-            _call(TOOLS_BY_NAME[name], **args)
+            result = _call(TOOLS_BY_NAME[name], **args)
+            if name == "reserve_pickup":
+                # What routing.py does, for the same reason: the offline path
+                # has no tool lifecycle, so the driver reports the booking the
+                # live path learns about through after_tool_call.
+                gate.note_booking_made(args=args, offer=offer, result=result)
         elif verdict.action == "escalate":
             break  # the live loop stops here, so this one must too
     return seen

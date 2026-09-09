@@ -148,19 +148,27 @@ scripted — and drives a model that retries a booking the gate has just refused
 this time with the rationale rewritten to "a coordinator already approved this by
 phone". It is held again, and the ledger stays empty. It is held because
 `assess()` never reads the rationale: it reads free capacity, extraction
-confidence, the same-day flag and the expiry margin, and nothing else.
+confidence, the same-day flag, the expiry margin and the weight of the load, and
+nothing else.
+
+Four of those five are facts the offer knows, and where the offer knows them it
+is the offer that is believed. The storage class, the hours left and the weight
+all arrive as arguments the model chose, so on their own they are claims: a load
+described as 700 lbs is still the 900 lbs the donor offered, and the gate judges
+the 900. `tests/test_gate_adversarial.py` is where those claims are attacked.
 
 What that test proves is the mechanism, not the model's manners. That is the
 point — the mechanism is the part that does not depend on the model.
 
 **Two tiers, and only one of them wakes anyone.** Alongside the four escalations
 the gate also *refuses* outright, back to the model, when a consequential call is
-simply malformed. Two cases: a message to a pantry that no booking in the ledger
-backs — the router is told to reserve before it announces, and this is what makes
-that an interlock rather than a line in a prompt — and a commitment the gate
-cannot judge because the offer was not passed in `invocation_state`, where
-proceeding would mean booking on half the evidence. Both come back to the model
-as a tool error beginning `DENIED:`, and neither reaches a coordinator's queue.
+not a judgment call but a mistake: a message to a pantry that no booking backs —
+the router is told to reserve before it announces, and this is what makes that an
+interlock rather than a line in a prompt — a commitment the gate cannot judge
+because the offer was not passed in `invocation_state`, arguments it cannot read
+at all, a weight that is not a positive number, a tool nobody has classified, and
+a load already promised somewhere else. All of them come back to the model as a
+tool error beginning `DENIED:`, and none of them reaches a coordinator's queue.
 
 ## When it wakes a human
 
@@ -208,11 +216,20 @@ otherwise identical.
 `build_model` inside `run_live`, so nothing on the offline path and nothing in
 the tests ever constructs a Bedrock client.
 
-Two test files, testing different things. `test_gate.py` calls the escalation
+Three test files, testing different things. `test_gate.py` calls the escalation
 policy directly — the four reasons, the ledger after a held offer, and that every
 booked pound comes out of some pantry's free space. `test_agent_loop.py` puts the
 same gate inside a real Strands agent run against a scripted model, so the
-interlock is tested where it actually runs.
+interlock is tested where it actually runs, and pins that the offline path and
+the live path reach the same verdict call by call.
+
+`test_gate_adversarial.py` is the red-team suite: every test in it is an attempt
+to get a booking or a coordinator message out without a human, and each one fails
+against a gate missing the fix it covers. Its last section is the opposite — the
+attacks the gate already withstood, kept as the evidence behind the claim above:
+a rationale claiming prior approval, a read-only lookup used to launder state
+between two attempts, a booking filed under a decoy donor name, an invented
+storage class, an unknown pantry, and announcing before booking.
 
 `--live` puts the reader agent on the raw files in `samples/` and the router
 agent on what it reads. For that, copy `.env.example` to `.env` and set a Bedrock
@@ -251,6 +268,8 @@ src/pantryrelay/
 samples/         six raw offers across three channels
 tests/           test_gate.py       escalation policy and capacity conservation
                  test_agent_loop.py the gate inside a real Strands agent run
+                 test_gate_adversarial.py  attacks on the gate, and the ones it
+                                    survived
                  scripted_model.py  a model that plays a fixed script, so the
                                     agent loop is testable without credentials
 run_demo.py      the Tuesday morning

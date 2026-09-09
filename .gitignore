@@ -10,5 +10,4 @@ dist/
 build/
 .DS_Store
 CLAUDE.md
-.claude.md
 .claude/

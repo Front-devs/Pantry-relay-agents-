@@ -343,7 +343,10 @@ def test_a_message_rides_on_the_booking_it_belongs_to(gate):
     assert gate.decide(
         tool_name="reserve_pickup", args=GOOD_BOOKING, offer=DRY_GOODS
     ).action == "allow"
-    _call(reserve_pickup, **GOOD_BOOKING)
+    booking = _call(reserve_pickup, **GOOD_BOOKING)
+    # The step both real paths take: after_tool_call in the live agent,
+    # route_offer in the offline one. The gate is told what actually happened.
+    gate.note_booking_made(args=GOOD_BOOKING, offer=DRY_GOODS, result=booking)
     assert gate.decide(
         tool_name="notify_pantry_coordinator",
         args={"pantry_id": "eastside", "message": "620 lbs inbound"},

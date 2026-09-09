@@ -28,10 +28,17 @@ Two rules keep the gate honest about *what* it is judging:
   gate. A new tool that changes the world is guarded from the moment it exists,
   even if somebody forgets to add it to ``CONSEQUENTIAL_TOOLS``.
 * Every fact the gate judges is taken from the offer where the offer knows it.
-  Storage class and remaining life are properties of the food, not of the
-  sentence the model wrote, so a call that disagrees with the offer is judged on
-  the offer's terms. Otherwise a model could pick its arguments to miss a check
-  while the real-world action stayed exactly as consequential.
+  Storage class, weight and remaining life are properties of the food, not of
+  the sentence the model wrote, so a call that disagrees with the offer is
+  judged on the offer's terms. Otherwise a model could pick its arguments to
+  miss a check while the real-world action stayed exactly as consequential.
+
+And one rule keeps it honest about *who* it is judging for:
+
+* A coordinator's answer belongs to the commitment it was given for. Strands
+  derives the interrupt id from the model's own tool-use id, so anything reusing
+  that id inherits the standing answer; the gate refuses to spend one yes on a
+  second, different commitment.
 
 ``decide()`` is the single entry point for policy. ``before_tool_call`` is a thin
 translation of its verdict into Strands actions, and ``routing.py`` calls the
@@ -41,7 +48,10 @@ same method, so the offline demo and the live agent cannot drift apart.
 from __future__ import annotations
 
 import hashlib
+import itertools
+import json
 import math
+import weakref
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -55,6 +65,18 @@ from .tools import CONSEQUENTIAL_TOOLS, READ_ONLY_TOOLS
 #: is a downgrade the gate treats as a storage conflict; an unrecognised class
 #: ranks coldest-of-nothing so it fails closed rather than passing silently.
 _STORAGE_RANK: dict[str, int] = {"ambient": 0, "refrigerated": 1, "frozen": 2}
+
+#: Offers are written by people with clipboards, so weights are rounded ("about
+#: four hundred pounds"). A declared weight counts as one the offer states when
+#: it is within this much of it: wide enough for an honest rounding, far too
+#: narrow to hide a load in.
+_WEIGHT_TOLERANCE = 0.02
+_WEIGHT_FLOOR_LBS = 1.0
+
+
+def _same_weight(claimed: float, stated: float) -> bool:
+    """Is a declared weight the offer's own figure, allowing for rounding?"""
+    return abs(claimed - stated) <= max(_WEIGHT_FLOOR_LBS, _WEIGHT_TOLERANCE * abs(stated))
 
 
 @dataclass(frozen=True)
@@ -98,18 +120,43 @@ class CoordinatorGate(InterventionHandler):
         # router per offer, so an id alone would silently drop the second
         # offer's escalation off the queue.
         self._held: set[tuple[Any, ...]] = set()
-        # (offer, pantry) pairs this gate has actually judged a booking for.
-        # A coordinator is only told food is coming if this run tried to book
-        # that food into that pantry — a stale ledger row from an earlier offer
-        # is not permission to send a message about a new one.
-        self._proposed: set[tuple[str, str]] = set()
+        # Bookings this gate has judged, keyed by exactly what was proposed:
+        # (offer, pantry, lbs, storage) -> "allowed" | "held". A coordinator is
+        # only told food is coming if this run judged *this* load into *that*
+        # pantry and a ledger row matching it landed; a stale row from an
+        # earlier offer, or a booking still sitting in a human's queue, is not
+        # permission to send a message about it.
+        self._proposed: dict[tuple[str, str, float, str], str] = {}
+        # Bookings that actually happened, as the tool itself reported them —
+        # one entry per booking, so the same load promised twice is two entries.
+        # A proposal is what the model asked for; this is what the world did.
+        self._confirmed: list[tuple[str, str, float, str]] = []
+        # What each held decision was actually about, keyed by the agent and the
+        # model's tool-use id. Strands builds the interrupt id out of that same
+        # tool-use id, so a coordinator's answer is addressable by anything that
+        # reuses it; this is what stops one yes covering a second commitment.
+        self._confirmations: dict[tuple[Any, Any], tuple[Any, ...]] = {}
+        # Stable per-agent identity. id() is recycled once an agent is collected
+        # and run_demo rebinds a router per offer, so an id alone could quietly
+        # merge two agents' decisions into one.
+        self._agent_tokens: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+        self._next_agent_token = itertools.count(1)
 
     # -- Strands lifecycle -------------------------------------------------
 
     def before_tool_call(self, event: Any) -> Any:
-        tool_use = getattr(event, "tool_use", None) or {}
-        args = tool_use.get("input") or {}
-        offer = (getattr(event, "invocation_state", None) or {}).get("offer")
+        # Read defensively: everything here is shaped by the model. A tool input
+        # that is not an object at all reaches this handler as a list or a
+        # string, and a handler that raises takes the whole run down with it —
+        # fail-closed on the tool, but the morning stops. Hand it to decide() as
+        # it arrived and let the policy refuse it.
+        tool_use = getattr(event, "tool_use", None)
+        tool_use = tool_use if isinstance(tool_use, dict) else {}
+        args = tool_use.get("input")
+        if args is None:
+            args = {}
+        state = getattr(event, "invocation_state", None)
+        offer = state.get("offer") if isinstance(state, dict) else None
 
         verdict = self.decide(tool_name=tool_use.get("name"), args=args, offer=offer)
 
@@ -120,13 +167,95 @@ class CoordinatorGate(InterventionHandler):
 
         escalation = verdict.escalation
         assert escalation is not None  # an escalate verdict always carries one
-        key = self._dashboard_key(
-            getattr(event, "agent", None), tool_use.get("toolUseId"), escalation
+
+        token = self._agent_token(getattr(event, "agent", None))
+        tool_use_id = tool_use.get("toolUseId")
+        stale = self._answer_already_spoken_for(
+            token, tool_use_id, tool_use.get("name"), args, escalation
         )
+        if stale is not None:
+            return Deny(reason=stale)
+
+        key = self._dashboard_key(token, tool_use_id, escalation)
         if key not in self._held:
             self._held.add(key)
             self.escalations.append(escalation)
         return Confirm(prompt=self.format_prompt(escalation), reason=escalation.reason_code)
+
+    def after_tool_call(self, event: Any) -> Any:
+        """Record what the world actually did, from the tool's own result.
+
+        ``before_tool_call`` only ever sees a proposal. Whether the commitment
+        was really made is a fact about the world, and the honest witness to it
+        is the result ``reserve_pickup`` returned — not the model's next
+        sentence, and not a ledger row that any earlier offer could have
+        written. Two things depend on knowing the difference: an announcement
+        may only follow a booking that happened, and a load may only be placed
+        as many times as the donor actually has it.
+
+        Anything else driving these tools — ``routing.py`` does, for the offline
+        demo — must call ``note_booking_made`` itself, for the same reason.
+        """
+        tool_use = getattr(event, "tool_use", None)
+        tool_use = tool_use if isinstance(tool_use, dict) else {}
+        args = tool_use.get("input")
+        state = getattr(event, "invocation_state", None)
+        offer = state.get("offer") if isinstance(state, dict) else None
+
+        if (
+            tool_use.get("name") == "reserve_pickup"
+            and isinstance(args, dict)
+            and isinstance(offer, DonationOffer)
+            and getattr(event, "cancel_message", None) is None
+            and getattr(event, "exception", None) is None
+        ):
+            self.note_booking_made(
+                args=args, offer=offer, result=getattr(event, "result", None)
+            )
+        return Proceed(reason="nothing left to guard once the tool has run")
+
+    def note_booking_made(
+        self, *, args: dict[str, Any], offer: DonationOffer, result: Any
+    ) -> bool:
+        """Record a booking the tool really made. Returns whether it counted.
+
+        Both paths call this — the live agent through ``after_tool_call``, the
+        deterministic router straight after it invokes the tool — so the two
+        cannot disagree about what has been committed.
+        """
+        if not self._booking_succeeded(result):
+            return False
+        self._confirmed.append(self._booking_key(args, offer))
+        return True
+
+    @staticmethod
+    def _booking_succeeded(result: Any) -> bool:
+        """Did reserve_pickup actually book, by its own account?
+
+        Accepts the tool's return value directly or wrapped in a Strands
+        ToolResult, because the two paths see different shapes of the same fact.
+        An error return — no capacity, no such pantry — is not a booking.
+        """
+        payload: Any = result
+        if isinstance(result, dict) and "content" in result:
+            if result.get("status") not in (None, "success"):
+                return False
+            payload = None
+            for block in result.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                if isinstance(block.get("json"), dict):
+                    payload = block["json"]
+                    break
+                if isinstance(block.get("text"), str):
+                    try:
+                        decoded = json.loads(block["text"])
+                    except ValueError:
+                        continue
+                    if isinstance(decoded, dict):
+                        payload = decoded
+                        break
+        return bool(isinstance(payload, dict) and payload.get("booked"))
 
     # -- Policy ------------------------------------------------------------
 
@@ -143,6 +272,18 @@ class CoordinatorGate(InterventionHandler):
         Strands action, and the deterministic router in ``routing.py`` acts on it
         directly. That is why they cannot disagree.
         """
+        # Arguments the gate cannot read are arguments it cannot judge. The
+        # model streams these as JSON, and JSON that parses to a list or a
+        # string is not a call any policy here can weigh.
+        if not isinstance(args, dict):
+            return Verdict(
+                "deny",
+                reason=(
+                    f"tool arguments arrived as {type(args).__name__}, not an object; the "
+                    "coordinator gate cannot judge a call whose arguments it cannot read"
+                ),
+            )
+
         # Allow-list, not deny-list: anything not known to be read-only is
         # treated as world-changing until it is declared otherwise.
         if tool_name in READ_ONLY_TOOLS:
@@ -179,22 +320,28 @@ class CoordinatorGate(InterventionHandler):
         if malformed is not None:
             return Verdict("deny", reason=malformed)
 
-        if tool_name == "reserve_pickup":
-            self._proposed.add((self._offer_key(offer), str(args.get("pantry_id"))))
+        overcommitted = self.overcommitment_reason(tool_name=tool_name, args=args, offer=offer)
+        if overcommitted is not None:
+            return Verdict("deny", reason=overcommitted)
 
         if tool_name == "notify_pantry_coordinator" and not self.is_backed_by_booking(args, offer):
-            return Verdict(
-                "deny",
-                reason=(
-                    f"there is no booking for {offer.donor_name} at pantry "
-                    f"{args.get('pantry_id')!r} on this offer; reserve_pickup must succeed "
-                    "before a coordinator is told the food is coming"
-                ),
-            )
+            return Verdict("deny", reason=self.unbacked_message_reason(args, offer))
 
         escalation = self.assess(tool_name=tool_name, args=args, offer=offer)
         if escalation is not None:
+            # A commitment a human still owns is *not* a commitment. It is
+            # recorded so that, if the coordinator says yes and the booking
+            # goes through, the message that follows can be matched to it — and
+            # as nothing more, because only a booking the tool actually reports
+            # making redeems it.
+            if tool_name == "reserve_pickup":
+                self._proposed.setdefault(self._booking_key(args, offer), "held")
             return Verdict("escalate", reason=escalation.reason_code, escalation=escalation)
+
+        # Registered only now, once every check has passed: a booking the gate
+        # refused or held must not read as one it proposed.
+        if tool_name == "reserve_pickup":
+            self._proposed[self._booking_key(args, offer)] = "allowed"
 
         return Verdict("allow", reason="within routing policy; no human judgment needed")
 
@@ -259,15 +406,37 @@ class CoordinatorGate(InterventionHandler):
                     proposed_action=proposed,
                 )
 
-            requested = _to_float(args.get("quantity_lbs"), default=0.0)
+            declared = _to_float(args.get("quantity_lbs"), default=0.0) or 0.0
+            # How much food is actually moving is a property of the offer, not
+            # of the number in the call. Shaving it is the cheapest way past the
+            # capacity check: the pantry has room for what the call admits to,
+            # and the truck arrives with the load the donor described.
+            committed = self.authoritative_lbs(args, offer)
+            if committed is None:
+                committed = declared
+
+            if committed > declared:
+                return Escalation(
+                    reason_code="storage_conflict",
+                    summary=f"Only {declared:.0f} of {committed:.0f} lbs would be booked",
+                    detail=(
+                        f"The offer from {offer.donor_name} lists {committed:.0f} lbs of "
+                        f"{storage} goods, but the booking commits {declared:.0f} lbs at "
+                        f"{pantry.name}, leaving {committed - declared:.0f} lbs with nowhere "
+                        "to go. Splitting a load, or placing part of it and leaving the "
+                        "rest with the donor, is a coordinator's call."
+                    ),
+                    proposed_action=proposed,
+                )
+
             free = pantry.capacity_for(storage)
-            if requested > free:
+            if committed > free:
                 return Escalation(
                     reason_code="storage_conflict",
                     summary=f"{pantry.name} cannot hold this load",
                     detail=(
-                        f"Needs {requested:.0f} lbs of {storage} space but only "
-                        f"{free:.0f} lbs is free — short by {requested - free:.0f} lbs. "
+                        f"Needs {committed:.0f} lbs of {storage} space but only "
+                        f"{free:.0f} lbs is free — short by {committed - free:.0f} lbs. "
                         "Splitting the load or bumping an existing booking is a "
                         "coordinator's call."
                     ),
@@ -337,6 +506,67 @@ class CoordinatorGate(InterventionHandler):
 
         return None
 
+    def overcommitment_reason(
+        self, *, tool_name: str | None, args: dict[str, Any], offer: DonationOffer
+    ) -> str | None:
+        """Why this booking commits food the offer does not have, or None.
+
+        A load can only be placed once, and nothing inside a single call reveals
+        that the same pallet was already promised somewhere else. So the gate
+        keeps the sum: what this offer has already booked, plus what this call
+        adds, cannot exceed what the donor actually offered in that storage
+        class.
+
+        Without it one 220 lb load books 220 lbs at two pantries — 440 lbs of
+        capacity consumed by a network that was given 220 lbs of food, and two
+        coordinators clearing space for a delivery only one of them will get.
+        Both calls pass every other check, because each is individually
+        reasonable; only the running total says otherwise.
+
+        This is a denial rather than an escalation. Splitting a load between two
+        pantries is a coordinator's decision, but promising the same food to
+        both is not a decision at all — it is a booking that cannot be honoured.
+        """
+        if tool_name != "reserve_pickup":
+            return None
+
+        storage = str(args.get("storage"))
+        lines = [item.quantity_lbs for item in offer.items if item.storage == storage]
+        if not lines:
+            # The offer says nothing about this class, so there is no figure to
+            # conserve. Other checks still apply; this one has no evidence.
+            return None
+
+        # This check is only as good as the gate's picture of what has already
+        # been booked, and that picture is kept by whoever drives the tools. If
+        # the ledger has grown behind the gate's back it cannot tell how much of
+        # this offer is already placed, and guessing low would let exactly the
+        # double commitment above through. Refusing is the honest answer, and it
+        # makes forgetting loud instead of silent.
+        unreported = len(LEDGER) - len(self._confirmed)
+        if unreported > 0:
+            return (
+                f"{unreported} booking(s) have been made that the coordinator gate was not "
+                "told about, so it cannot tell how much of this offer is already placed; "
+                "whatever calls reserve_pickup must report the result through "
+                "note_booking_made, as after_tool_call and route_offer both do"
+            )
+
+        available = math.fsum(lines)
+        offer_key = self._offer_key(offer)
+        booked = math.fsum(
+            key[2] for key in self._confirmed if key[0] == offer_key and key[3] == storage
+        )
+        declared = _to_float(args.get("quantity_lbs"), default=0.0) or 0.0
+        slack = max(_WEIGHT_FLOOR_LBS, _WEIGHT_TOLERANCE * available)
+        if booked + declared <= available + slack:
+            return None
+        return (
+            f"{offer.donor_name} offered {available:.0f} lbs of {storage} goods and "
+            f"{booked:.0f} lbs of it is already booked on this offer; committing "
+            f"{declared:.0f} lbs more would promise food the donor does not have"
+        )
+
     @staticmethod
     def storage_downgrade(storage: Any, offer: DonationOffer) -> str | None:
         """The colder class this offer actually needs, if the call asked for less.
@@ -369,24 +599,98 @@ class CoordinatorGate(InterventionHandler):
             return claimed
         return min(claimed, actual)
 
+    @staticmethod
+    def authoritative_lbs(args: dict[str, Any], offer: DonationOffer | None) -> float | None:
+        """How much food is really being committed, not how much the call admits to.
+
+        The mirror image of ``authoritative_hours``. There the shorter window
+        wins; here the *larger* weight does, because for weight it is the bigger
+        number that is the careful one — it books more space, not less, and
+        makes every downstream check stricter rather than looser.
+
+        A declared weight is taken at face value when the offer can account for
+        it: one of the offer's own lines in that storage class, the class total,
+        or more than the class total. Anything short of that is a split the
+        offer does not describe, and the class total is what is really moving.
+
+        Returns None only when the offer says nothing about this storage class —
+        the one case where the call is the only witness there is.
+        """
+        declared = _to_float(args.get("quantity_lbs"), default=None)
+        if declared is None or offer is None:
+            return declared
+
+        storage = args.get("storage", "ambient")
+        lines = [item.quantity_lbs for item in offer.items if item.storage == storage]
+        if not lines:
+            return None
+
+        total = math.fsum(lines)
+        if declared >= total or _same_weight(declared, total):
+            return declared
+        # Booking one line of a multi-line offer is ordinary; the router places
+        # an offer item by item and says so in the call.
+        if any(_same_weight(declared, line) for line in lines):
+            return declared
+        return total
+
     def is_backed_by_booking(self, args: dict[str, Any], offer: DonationOffer) -> bool:
         """Has this donor's food actually been booked into this pantry, on this offer?
 
         The router is told to reserve before it announces, but an instruction in
         a system prompt is a suggestion. This makes the ordering an interlock:
-        the message only goes out if this run judged a booking for this offer at
-        this pantry *and* a real, positive booking for the donor landed in the
-        ledger. A zero-pound placeholder buys nothing, and last week's row for
-        the same donor is not permission to announce today's load.
+        the message only goes out if a booking for this offer at this pantry
+        actually happened — the tool said so — and a ledger row for that exact
+        load, same donor, same pantry, same weight, same storage, is there.
+
+        Matching on donor and pantry alone was not enough. The same donor gives
+        twice in a morning, and the earlier row is real; it said nothing about
+        the load this message describes. Nor is a booking still sitting in a
+        coordinator's queue permission to announce it: a held entry is only
+        redeemed by a real row, which exists only if a human said yes and the
+        tool then ran. A zero-pound placeholder buys nothing either.
         """
         pantry_id = args.get("pantry_id")
-        if (self._offer_key(offer), str(pantry_id)) not in self._proposed:
-            return False
-        return any(
-            entry["pantry_id"] == pantry_id
-            and entry["donor"] == offer.donor_name
-            and _to_float(entry.get("lbs"), default=0.0) > 0
-            for entry in LEDGER
+        for entry in LEDGER:
+            if entry["pantry_id"] != pantry_id or entry["donor"] != offer.donor_name:
+                continue
+            if not (_to_float(entry.get("lbs"), default=0.0) or 0.0) > 0:
+                continue
+            key = self._booking_key(
+                {
+                    "pantry_id": entry["pantry_id"],
+                    "quantity_lbs": entry.get("lbs"),
+                    "storage": entry.get("storage"),
+                },
+                offer,
+            )
+            # Judged here *and* made out there. The two records are kept for
+            # different reasons and a message needs both: a booking this gate
+            # never weighed is not one it can vouch for, however real the row,
+            # and a booking it weighed but that never happened is not a
+            # delivery.
+            if key in self._proposed and key in self._confirmed:
+                return True
+        return False
+
+    def unbacked_message_reason(self, args: dict[str, Any], offer: DonationOffer) -> str:
+        """Why this announcement is refused — named precisely, for the model."""
+        pantry_id = args.get("pantry_id")
+        held = [
+            key
+            for key, status in self._proposed.items()
+            if status == "held" and key[0] == self._offer_key(offer) and key[1] == str(pantry_id)
+        ]
+        if held:
+            return (
+                f"the booking of {held[0][2]:g} lbs for {offer.donor_name} at pantry "
+                f"{pantry_id!r} is still held for a coordinator; a decision waiting on a "
+                "human is not a delivery to announce"
+            )
+        return (
+            f"there is no booking for {offer.donor_name} at pantry {pantry_id!r} on this "
+            "offer; reserve_pickup must succeed before a coordinator is told the food is "
+            "coming"
         )
 
     # -- Bookkeeping -------------------------------------------------------
@@ -396,9 +700,78 @@ class CoordinatorGate(InterventionHandler):
         """A stable identity for one offer, so permissions cannot leak between them."""
         return hashlib.sha256(offer.model_dump_json().encode("utf-8")).hexdigest()
 
+    @classmethod
+    def _booking_key(
+        cls, args: dict[str, Any], offer: DonationOffer
+    ) -> tuple[str, str, float, str]:
+        """Identity of one booking: which offer, which pantry, how much, how cold.
+
+        Deliberately the whole load and not just its address. Two deliveries
+        from one donor to one pantry in a morning are two different commitments,
+        and only the one that actually happened may be announced.
+        """
+        return (
+            cls._offer_key(offer),
+            str(args.get("pantry_id")),
+            round(_to_float(args.get("quantity_lbs"), default=0.0) or 0.0, 3),
+            str(args.get("storage")),
+        )
+
+    def _agent_token(self, agent: Any) -> Any:
+        """A stable identity for one deciding agent.
+
+        ``id()`` is recycled the moment an agent is collected, and run_demo
+        rebinds a router per offer against a shared gate, so an id alone can
+        silently hand one agent's held decisions to its successor.
+        """
+        if agent is None:
+            return None
+        try:
+            token = self._agent_tokens.get(agent)
+            if token is None:
+                token = next(self._next_agent_token)
+                self._agent_tokens[agent] = token
+            return token
+        except TypeError:  # not weak-referenceable or not hashable
+            return id(agent)
+
+    def _answer_already_spoken_for(
+        self,
+        agent_token: Any,
+        tool_use_id: Any,
+        tool_name: str | None,
+        args: dict[str, Any],
+        escalation: Escalation,
+    ) -> str | None:
+        """Why this held call may not ride on an answer already given, or None.
+
+        Strands derives the interrupt id from the model's own tool-use id, so a
+        coordinator's answer is addressable by anything that reuses that id. A
+        model that puts two different commitments under one id is asking a yes
+        given for the first to cover the second, which no human ever saw: the
+        gate escalates, the dashboard shows one card, and two tools run.
+
+        The legitimate re-entry — the same call, replayed when the loop resumes
+        — carries the same commitment, so it matches and passes through.
+        """
+        key = (agent_token, tool_use_id)
+        commitment = (
+            tool_name,
+            escalation.reason_code,
+            tuple(sorted((str(k), repr(v)) for k, v in args.items())),
+        )
+        held = self._confirmations.setdefault(key, commitment)
+        if held == commitment:
+            return None
+        return (
+            f"tool-use id {tool_use_id!r} is already holding a different commitment for a "
+            f"coordinator ({held[0]}, {held[1]}); an answer covers the call it was asked "
+            "about, so this one needs a tool-use id of its own"
+        )
+
     @staticmethod
     def _dashboard_key(
-        agent: Any, tool_use_id: Any, escalation: Escalation
+        agent_token: Any, tool_use_id: Any, escalation: Escalation
     ) -> tuple[Any, ...]:
         """Identity of one held decision on the coordinator's queue.
 
@@ -410,7 +783,7 @@ class CoordinatorGate(InterventionHandler):
         offers stay two entries.
         """
         return (
-            id(agent) if agent is not None else None,
+            agent_token,
             tool_use_id,
             escalation.reason_code,
             escalation.proposed_action,

@@ -88,6 +88,12 @@ def route_offer(offer: DonationOffer, gate: CoordinatorGate) -> Outcome:
         if booking.get("error"):
             outcome.unplaceable.append(f"{item.description}: {booking['error']}")
             continue
+        # Tell the gate what actually happened. The live path learns this from
+        # after_tool_call; here there is no tool lifecycle, so the driver says
+        # so itself. Without it the gate cannot tell a booking that was made
+        # from one that was merely proposed, and both the announcement interlock
+        # and the "a load is placed once" check would quietly stop holding.
+        gate.note_booking_made(args=args, offer=offer, result=booking)
         outcome.booked.append(booking)
 
         message = (

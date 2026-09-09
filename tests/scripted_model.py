@@ -23,6 +23,31 @@ def call(name: str, **kwargs: Any) -> dict[str, Any]:
     return {"tool": name, "input": kwargs}
 
 
+def call_as(tool_use_id: str, name: str, **kwargs: Any) -> dict[str, Any]:
+    """A tool call under a tool-use id the script chooses.
+
+    Ids normally come from the model, which is the point: Strands derives the
+    interrupt id a coordinator's answer is filed under from the tool-use id, so
+    an attack that reuses one has to be expressible here.
+    """
+    return {"tool": name, "input": kwargs, "id": tool_use_id}
+
+
+def raw_call(name: str, raw_input: str, tool_use_id: str | None = None) -> dict[str, Any]:
+    """A tool call whose arguments are sent verbatim, valid JSON or not.
+
+    Real models stream tool arguments as a JSON string. Strands parses it and
+    hands the result to the gate without checking that it is an object, so the
+    gate has to survive being handed a list.
+    """
+    return {"tool": name, "raw": raw_input, "id": tool_use_id}
+
+
+def same_turn(*calls: dict[str, Any]) -> dict[str, Any]:
+    """Several tool calls in one assistant message, as a parallel model turn."""
+    return {"blocks": list(calls)}
+
+
 def say(text: str) -> dict[str, Any]:
     """One scripted turn: the model answers and stops."""
     return {"text": text}
@@ -62,21 +87,36 @@ class ScriptedModel(Model):
         turn = self.turns[min(self.calls, len(self.turns) - 1)]
         self.calls += 1
 
+        blocks = turn.get("blocks") or ([turn] if "tool" in turn else [])
+
         yield {"messageStart": {"role": "assistant"}}
-        if "tool" in turn:
-            yield {
-                "contentBlockStart": {
-                    "start": {"toolUse": {"toolUseId": f"tu-{self.calls}", "name": turn["tool"]}},
-                    "contentBlockIndex": 0,
+        if blocks:
+            for index, block in enumerate(blocks):
+                # A single-call turn keeps the plain "tu-N" id the rest of the
+                # suite is written against; only a parallel turn needs the
+                # suffix, and an attack that reuses an id says so explicitly.
+                default_id = f"tu-{self.calls}" if len(blocks) == 1 else f"tu-{self.calls}-{index}"
+                yield {
+                    "contentBlockStart": {
+                        "start": {
+                            "toolUse": {
+                                "toolUseId": block.get("id") or default_id,
+                                "name": block["tool"],
+                            }
+                        },
+                        "contentBlockIndex": index,
+                    }
                 }
-            }
-            yield {
-                "contentBlockDelta": {
-                    "delta": {"toolUse": {"input": json.dumps(turn["input"])}},
-                    "contentBlockIndex": 0,
+                # `raw` goes out exactly as written, so a test can send tool
+                # arguments that are not an object at all.
+                payload = block["raw"] if "raw" in block else json.dumps(block["input"])
+                yield {
+                    "contentBlockDelta": {
+                        "delta": {"toolUse": {"input": payload}},
+                        "contentBlockIndex": index,
+                    }
                 }
-            }
-            yield {"contentBlockStop": {"contentBlockIndex": 0}}
+                yield {"contentBlockStop": {"contentBlockIndex": index}}
             yield {"messageStop": {"stopReason": "tool_use"}}
         else:
             yield {"contentBlockStart": {"start": {}, "contentBlockIndex": 0}}
