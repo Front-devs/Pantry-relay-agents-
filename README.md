@@ -2,7 +2,40 @@
 
 **An agent that keeps rescued food moving — and knows when to wake a human.**
 
-Built for the [Agents for Humans Hackathon](https://agentsforhumans.devpost.com/) · **Good Neighbor Agents** track · Strands Agents SDK on Amazon Bedrock
+[Agents for Humans Hackathon](https://agentsforhumans.devpost.com/) · **Good Neighbor Agents** track · Strands Agents SDK on Amazon Bedrock
+
+**[▶ Live demo](https://pantryrelay.onrender.com)** · [Demo video](#) · [Architecture](#architecture) · [What is seeded](#whats-real-and-whats-seeded)
+
+---
+
+## The one-paragraph version
+
+A food bank coordinator gets six donation offers before nine in the morning, in
+three different formats, and has to work out for each one what the food is, how
+long it has, and which pantry can take it. PantryRelay does that triage. What
+makes it different from every other "AI agent with a human in the loop" is that
+the human checkpoint is **not a prompt instruction**. It is
+`CoordinatorGate`, a Strands `InterventionHandler` on the tool lifecycle. The
+agent cannot talk its way past it, because the gate is not part of the
+conversation — and there is a red-team suite that proves it, including a model
+that claims a coordinator already approved the booking by phone.
+
+## If you have two minutes
+
+| Look at | Why |
+|---|---|
+| **[The live demo](https://pantryrelay.onrender.com)** — press *Run Morning Triage* | Eight offers, five routed silently, three stopped. Every number on the page came out of a real gate, not a script. |
+| [`gate.py`](src/pantryrelay/gate.py) → `before_tool_call` and `assess()` | The whole claim, in one file. `assess()` never reads the model's rationale. |
+| [`tests/test_gate_adversarial.py`](tests/test_gate_adversarial.py) | Twenty attempts to get a booking out without a human. All fail. |
+| `py -3.14 run_demo.py` | The same morning in a terminal, no credentials needed. |
+
+## Track fit
+
+Good Neighbor Agents asks for "an agent that helps groups of people, not just
+one — neighborhoods, nonprofits, food banks, schools, libraries, small local
+orgs." The operator here is one coordinator. The beneficiaries are the four
+pantries they route to, and the families those pantries feed. The agent's job is
+to protect the coordinator's attention so more of the food actually moves.
 
 ---
 
@@ -239,6 +272,27 @@ times without a test going red.
 Everything else proceeds. That restraint is the product: an agent that escalates
 constantly is just a slower inbox.
 
+### About that three-in-eight
+
+Three holds out of eight offers is a high escalation rate, and it is fair to ask
+whether an agent that stops that often is doing its job.
+
+The answer is that this morning is **stacked on purpose**. It is not a
+representative Tuesday; it is a compressed one. Five of the eight offers are
+ordinary and route silently in about a second. The other three are the hard cases
+a coordinator meets across a week — a load that will not fit, a transcript that
+half-failed, a donor with a deadline — gathered into one morning so the interlock
+is visible inside ninety seconds of a demo video.
+
+A real morning would look like the five. If the seeded offers were representative
+the gate would fire about once a week, which is correct for the product and
+useless for showing you how it works.
+
+The number that matters is not the ratio, it is that **each hold names a
+different reason, and each is a decision a coordinator would want**. A gate that
+stopped three times for the same reason would be a capacity check with extra
+steps.
+
 Note that a resume is a fresh invocation: when a coordinator answers, pass the
 offer again (`agent(responses, invocation_state={"offer": offer})`). Strands does
 not carry invocation state across the pause, and the gate refuses rather than
@@ -373,26 +427,32 @@ web/index.html   the dashboard; holds no scripted run of its own
 
 ## Submission
 
-What Devpost requires for this hackathon, and where each item stands. Anything
-marked TODO is not done yet. Entries close **14 September 2026, 5:00 pm Pacific**.
+Entries close **14 September 2026, 5:00 pm Pacific**.
 
 | Required | Status |
 |---|---|
 | Public code repository | done — [Front-devs/Pantry-relay-agents-](https://github.com/Front-devs/Pantry-relay-agents-) |
-| Open source license file, visible at the repo root | done — [LICENSE](LICENSE), MIT |
+| Open source license, visible at the repo root | done — [LICENSE](LICENSE), MIT |
 | README | done — this file |
 | Architecture diagram | done — [above](#architecture) |
+| Text description of the project, audience and functionality | done — a Devpost field, written for that form |
 | Demo video, **5 minutes maximum**, public on YouTube or Vimeo | TODO — paste the link here |
-| The video must show the project working *and* pitch (1) the problem (2) who it is for (3) why it matters | TODO |
-| Text description of features and functionality | TODO — a Devpost field, written for that form, not this README pasted in |
+| The video must show it working *and* pitch the problem, the audience, and why it matters | script ready — [DEMO_VIDEO_SCRIPT.md](DEMO_VIDEO_SCRIPT.md) |
 | AWS Builder ID | TODO |
-| Live demo link *(optional; strengthens the Technical Implementation score)* | done — [pantryrelay.onrender.com](https://pantryrelay.onrender.com) (free tier, sleeps when idle; open it a few minutes before judging) |
-| builder.aws blog post *(optional; up to +0.6 on the final score)* | TODO or n/a |
+| Live demo link *(optional; strengthens Technological Implementation)* | done — [pantryrelay.onrender.com](https://pantryrelay.onrender.com) |
+| builder.aws post, "Agents for Humans" in the title *(optional; bonus points)* | TODO — draft in `BUILDER_AWS_POST.md` |
 
-Track fit, for the pitch: Good Neighbor Agents asks for "an agent that helps
-groups of people, not just one — neighborhoods, nonprofits, food banks, schools,
-libraries, small local orgs." The user here is one coordinator; the
-beneficiaries are the pantries they route to.
+### Where the evidence is, criterion by criterion
+
+The hackathon judges on five things. This is where to look for each.
+
+| Criterion | The strongest evidence in this repo |
+|---|---|
+| **Technological Implementation** | `CoordinatorGate` is a real Strands `InterventionHandler` on `before_tool_call`, returning `Proceed`, `Confirm` and `Deny` — not a prompt. Two agents, `structured_output` for reading and a tool-calling router. 81 tests, no credentials needed. A live demo that runs the real gate. |
+| **Design** | The dashboard is a working product, not a screenshot: a decision queue, three kinds of coordinator choice, capacity that moves only when a human says so, and per-viewer sessions so two people can use the URL at once. |
+| **Potential Impact** | ReFED's 2024 figures put US surplus food at 70 million tons, with food service and retail — the donors modelled here — at 17.9% and 5.7% of it. The bottleneck this addresses is the half hour of triage nobody had. |
+| **Creativity & Originality** | The non-obvious claim: a human checkpoint is worthless if the model can argue with it. Making the gate a lifecycle object rather than an instruction is the whole design, and `tests/test_gate_adversarial.py` is twenty attempts to break it. |
+| **Presentation** | The demo holds three offers for three different reasons inside ninety seconds, and the README states plainly what is real, what is seeded, and why the escalation rate is deliberately high. |
 
 ## License
 
