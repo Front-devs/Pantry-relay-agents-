@@ -1,0 +1,29 @@
+# AWS App Runner configuration for the PantryRelay dashboard.
+#
+# Deploying on AWS is the thematically consistent choice for this hackathon, and
+# unlike Render's free tier the service does not sleep, so a judge clicking the
+# link does not wait for a cold start. It is not free.
+#
+# The service needs NO AWS credentials of its own and no IAM instance role
+# beyond the default: the dashboard never constructs a Bedrock client. Only
+# `run_demo.py --live` talks to Bedrock, and that is meant to be run locally.
+#
+# To deploy: App Runner > Create service > Source: this GitHub repository >
+# Deployment settings: automatic > Build: use a configuration file.
+
+version: 1.0
+runtime: python3
+
+build:
+  commands:
+    build:
+      - pip install -r requirements.txt
+
+run:
+  runtime-version: 3.11.9
+  command: python web_app.py --no-browser
+  network:
+    port: 8080
+  env:
+    - name: PORT
+      value: "8080"

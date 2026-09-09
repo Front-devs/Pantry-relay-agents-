@@ -1,0 +1,24 @@
+# Render blueprint for the PantryRelay dashboard.
+#
+# No AWS credentials are needed to run this. The dashboard reaches the gate,
+# the routing policy and the seeded network, none of which construct a Bedrock
+# client — `build_model` is imported inside `run_live` in run_demo.py and is
+# never touched by the web path. `strands-agents` is installed because the gate
+# subclasses its InterventionHandler, which is a library import, not a login.
+#
+# Render sets PORT itself. web_app.py reads it and binds 0.0.0.0 when it is set.
+#
+# To deploy: push this file, then in the Render dashboard choose
+# New > Blueprint and point it at this repository.
+
+services:
+  - type: web
+    name: pantryrelay
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python web_app.py --no-browser
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"

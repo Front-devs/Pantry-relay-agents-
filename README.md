@@ -262,11 +262,21 @@ space, `approve` or `decline` for the rest. A decision that does not fit a given
 hold degrades to the nearest one that does, so a single flag is meaningful across
 a mixed queue.
 
-`web_app.py` needs no credentials either, and no packages beyond the standard
-library. It serves the dashboard, and the dashboard asks it for a run rather than
-replaying one: `/api/run` routes every offer through a real `CoordinatorGate` and
-returns the verdicts, `/api/resolve` carries out a coordinator's answer against
-the escalation the gate raised.
+`web_app.py` needs no credentials either, and nothing beyond the standard library
+at runtime. It serves the dashboard, and the dashboard asks it for a run rather
+than replaying one: `/api/run` routes every offer through a real
+`CoordinatorGate` and returns the verdicts, `/api/resolve` carries out a
+coordinator's answer against the escalation the gate raised.
+
+That "no credentials" is structural too. The web path never imports `agent.py`,
+so no Bedrock client is ever constructed — you can verify it by stripping every
+AWS variable from the environment and running it anyway. Each viewer gets their
+own session and their own copy of the pantry network, so two people can run the
+morning at once without spending each other's freezer space.
+
+[DEPLOY.md](DEPLOY.md) covers putting the dashboard behind a public URL, on
+Render or on AWS App Runner. `render.yaml` and `apprunner.yaml` are in the repo
+root.
 
 Python 3.10+. If `python` is not on your PATH, use whichever launcher is —
 `py -3.14` on Windows, `python3` on most macOS and Linux setups. The commands are
@@ -368,7 +378,7 @@ marked TODO is not done yet. Entries close **14 September 2026, 5:00 pm Pacific*
 | The video must show the project working *and* pitch (1) the problem (2) who it is for (3) why it matters | TODO |
 | Text description of features and functionality | TODO — a Devpost field, written for that form, not this README pasted in |
 | AWS Builder ID | TODO |
-| Live demo link *(optional; strengthens the Technical Implementation score)* | TODO — `web_app.py` is deployable as-is; it binds `0.0.0.0` and honours `PORT` |
+| Live demo link *(optional; strengthens the Technical Implementation score)* | TODO — paste the URL; deploy steps and configs are in [DEPLOY.md](DEPLOY.md) |
 | builder.aws blog post *(optional; up to +0.6 on the final score)* | TODO or n/a |
 
 Track fit, for the pitch: Good Neighbor Agents asks for "an agent that helps

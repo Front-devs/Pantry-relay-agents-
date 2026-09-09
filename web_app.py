@@ -17,9 +17,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
+import threading
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from collections import OrderedDict
+from contextlib import contextmanager
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -38,10 +43,60 @@ from pantryrelay.gate import CoordinatorGate  # noqa: E402
 from pantryrelay.resolution import apply_resolution, coerce_choice  # noqa: E402
 from pantryrelay.trace import run_morning  # noqa: E402
 
-#: The gate from the most recent /api/run. A coordinator's answer belongs to the
-#: run that raised the question, so the escalations it resolves are the objects
-#: that run actually produced — not a fresh set built to match.
-SESSION: dict[str, Any] = {"gate": None}
+COOKIE_NAME = "pantryrelay_sid"
+
+#: How many viewers' runs to keep. A public demo link gets opened by strangers
+#: and never closed, so the oldest session is evicted rather than letting this
+#: grow without limit.
+MAX_SESSIONS = 200
+
+
+class Session:
+    """One viewer's morning.
+
+    The pantry network, the ledger and the outbox are module-level state in
+    ``data.py``, which is right for a single-process demo and wrong for a public
+    URL two people can open at once. Each viewer therefore keeps their own copy
+    of that state here, and a request swaps it in for the moment it runs.
+
+    The gate belongs to the session for a stronger reason than tidiness. A
+    coordinator's answer belongs to the run that raised the question, so the
+    escalation a resolution acts on has to be the object that run actually
+    produced — not an equivalent one rebuilt to match.
+    """
+
+    def __init__(self) -> None:
+        self.gate: CoordinatorGate | None = None
+        self.capacity: dict[str, dict[str, float]] | None = None
+        self.ledger: list[dict[str, Any]] = []
+        self.outbox: list[dict[str, Any]] = []
+
+
+SESSIONS: OrderedDict[str, Session] = OrderedDict()
+
+#: Serialises access to the shared module-level network while a session's state
+#: is swapped in. Every run is a few milliseconds of pure computation, so one
+#: lock costs nothing and removes the whole class of interleaving bug.
+STATE_LOCK = threading.Lock()
+
+
+@contextmanager
+def session_state(session: Session):
+    """Run a block against one viewer's pantry network, then put it back."""
+    with STATE_LOCK:
+        reset()
+        if session.capacity is not None:
+            for pantry in PANTRIES:
+                pantry.free_lbs = dict(session.capacity[pantry.id])
+            LEDGER.extend(session.ledger)
+            OUTBOX.extend(session.outbox)
+        try:
+            yield
+        finally:
+            session.capacity = {p.id: dict(p.free_lbs) for p in PANTRIES}
+            session.ledger = list(LEDGER)
+            session.outbox = list(OUTBOX)
+            reset()
 
 WEB_DIR = Path(__file__).parent / "web"
 INDEX_HTML = WEB_DIR / "index.html"
@@ -55,45 +110,80 @@ TOTAL_CAPACITIES = {
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    #: Set on the response when this request minted a new session id.
+    _new_sid: str | None = None
+
+    def session(self) -> Session:
+        """This viewer's session, creating and cookie-ing one if needed."""
+        raw = self.headers.get("Cookie")
+        sid = None
+        if raw:
+            try:
+                sid = SimpleCookie(raw).get(COOKIE_NAME)
+                sid = sid.value if sid else None
+            except Exception:
+                sid = None
+
+        with STATE_LOCK:
+            if sid and sid in SESSIONS:
+                SESSIONS.move_to_end(sid)
+                return SESSIONS[sid]
+            sid = secrets.token_urlsafe(16)
+            session = Session()
+            SESSIONS[sid] = session
+            while len(SESSIONS) > MAX_SESSIONS:
+                SESSIONS.popitem(last=False)
+
+        self._new_sid = sid
+        return session
+
     def do_GET(self) -> None:
         if self.path in ("/", "/index.html"):
             self.serve_file(INDEX_HTML, "text/html; charset=utf-8")
         elif self.path == "/api/state":
-            self.send_json({
-                "pantries": [
-                    {
-                        "id": p.id,
-                        "name": p.name,
-                        "address": p.address,
-                        "distance_km": p.distance_km,
-                        "contact": p.contact,
-                        "needs": p.needs,
-                        "free_lbs": p.free_lbs,
-                        "total_lbs": TOTAL_CAPACITIES.get(p.id, {}),
-                    }
-                    for p in PANTRIES
-                ],
-                "ledger": LEDGER,
-                "outbox": OUTBOX,
-            })
+            session = self.session()
+            with session_state(session):
+                payload = {
+                    "pantries": [
+                        {
+                            "id": p.id,
+                            "name": p.name,
+                            "address": p.address,
+                            "distance_km": p.distance_km,
+                            "contact": p.contact,
+                            "needs": p.needs,
+                            "free_lbs": dict(p.free_lbs),
+                            "total_lbs": TOTAL_CAPACITIES.get(p.id, {}),
+                        }
+                        for p in PANTRIES
+                    ],
+                    "ledger": list(LEDGER),
+                    "outbox": list(OUTBOX),
+                }
+            self.send_json(payload)
         else:
             self.send_error(404, "File Not Found")
 
     def do_POST(self) -> None:
+        session = self.session()
         if self.path == "/api/reset":
-            reset()
-            SESSION["gate"] = None
+            with STATE_LOCK:
+                session.gate = None
+                session.capacity = None
+                session.ledger = []
+                session.outbox = []
             self.send_json({"status": "ok", "message": "Pantry state reset to the 08:00 baseline"})
         elif self.path == "/api/run":
             # The page asks for a run; it does not describe one. Everything the
-            # dashboard renders below comes back out of route_offer and the real
+            # dashboard renders comes back out of route_offer and the real
             # CoordinatorGate, so what a viewer watches is what the gate did.
             gate = CoordinatorGate()
-            trace = run_morning(gate)
-            SESSION["gate"] = gate
+            with session_state(session):
+                trace = run_morning(gate)
+            session.gate = gate
             self.send_json(trace)
         elif self.path == "/api/resolve":
-            self.handle_resolve()
+            self.handle_resolve(session)
         else:
             self.send_error(404, "Endpoint Not Found")
 
@@ -104,9 +194,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (ValueError, TypeError, json.JSONDecodeError):
             return {}
 
-    def handle_resolve(self) -> None:
+    def handle_resolve(self, session: Session) -> None:
         """Carry out a coordinator's answer to one held escalation."""
-        gate = SESSION.get("gate")
+        gate = session.gate
         if gate is None:
             self.send_json({"error": "no run in progress — start the morning first"})
             return
@@ -120,17 +210,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "no held decision with that id"})
             return
 
-        results = apply_resolution(esc, coerce_choice(esc, choice))
+        # The resolution runs against this viewer's own pantry network, so two
+        # people answering the same held decision do not spend each other's
+        # freezer space.
+        with session_state(session):
+            results = apply_resolution(esc, coerce_choice(esc, choice))
+            payload = {
+                "results": results,
+                "pantries": [
+                    {"id": p.id, "name": p.name, "free_lbs": dict(p.free_lbs)}
+                    for p in PANTRIES
+                ],
+                "bookings": len(LEDGER),
+                "messages": len(OUTBOX),
+            }
         gate.escalations.remove(esc)
-        self.send_json({
-            "results": results,
-            "pantries": [
-                {"id": p.id, "name": p.name, "free_lbs": dict(p.free_lbs)} for p in PANTRIES
-            ],
-            "remaining": len(gate.escalations),
-            "bookings": len(LEDGER),
-            "messages": len(OUTBOX),
-        })
+        payload["remaining"] = len(gate.escalations)
+        self.send_json(payload)
 
     def serve_file(self, file_path: Path, content_type: str) -> None:
         if not file_path.exists():
@@ -149,7 +245,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # No wildcard CORS here: the session cookie below is what separates one
+        # viewer's morning from another's, and a wildcard origin plus cookies is
+        # the combination browsers refuse anyway.
+        if self._new_sid:
+            self.send_header(
+                "Set-Cookie",
+                f"{COOKIE_NAME}={self._new_sid}; Path=/; SameSite=Lax; Max-Age=86400",
+            )
+            self._new_sid = None
         self.end_headers()
         self.wfile.write(raw)
 
@@ -170,7 +274,9 @@ def main() -> int:
     server = None
     for attempt_port in range(port, port + 10):
         try:
-            server = HTTPServer((host, attempt_port), DashboardHandler)
+            # Threaded: one slow client must not stall every other viewer of a
+            # public demo link. Shared state is guarded by STATE_LOCK.
+            server = ThreadingHTTPServer((host, attempt_port), DashboardHandler)
             port = attempt_port
             break
         except OSError:
