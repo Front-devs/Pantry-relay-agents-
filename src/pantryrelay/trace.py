@@ -276,12 +276,8 @@ def run_morning_live(gate: CoordinatorGate | None = None) -> dict[str, Any]:
             "ExpiredTokenException", "InvalidSignatureException",
             "ThrottlingException",
         }:
-            from .agent import DEFAULT_MODEL_ID, DEFAULT_REGION
-            raise LiveUnavailable(
-                f"Bedrock refused the call ({code})",
-                f"Model {DEFAULT_MODEL_ID!r} in {DEFAULT_REGION!r} may not be "
-                f"enabled for this account.",
-            ) from exc
+            from .config import explain_client_error
+            raise LiveUnavailable(*explain_client_error(exc)) from exc
         raise
     except BotoCoreError as exc:
         raise LiveUnavailable("AWS could not be reached", str(exc)) from exc

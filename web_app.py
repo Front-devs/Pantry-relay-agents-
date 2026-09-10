@@ -39,6 +39,10 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
+from pantryrelay.config import load_dotenv  # noqa: E402
+
+load_dotenv()
+
 from pantryrelay.data import LEDGER, OUTBOX, PANTRIES, reset  # noqa: E402
 from pantryrelay.gate import CoordinatorGate  # noqa: E402
 from pantryrelay.resolution import apply_resolution, coerce_choice  # noqa: E402

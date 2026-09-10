@@ -26,6 +26,12 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
+from pantryrelay.config import load_dotenv  # noqa: E402
+
+# Before anything reads AWS settings. The README tells a reader to copy
+# .env.example to .env, so .env has to actually be loaded.
+load_dotenv()
+
 from pantryrelay import CoordinatorGate, route_offer  # noqa: E402
 from pantryrelay.data import LEDGER, OUTBOX, PANTRIES, reset  # noqa: E402
 from pantryrelay.fixtures import MORNING, SAMPLE_FILES  # noqa: E402
@@ -150,11 +156,63 @@ def main() -> int:
             "not fit a given hold degrades to the nearest one that does."
         ),
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report whether this machine can reach Bedrock, and stop",
+    )
     args = parser.parse_args()
 
+    if args.check:
+        return run_check()
     if args.live:
         return run_live_guarded(quiet=args.quiet, interactive=args.interactive, resolve=args.resolve)
     return run_offline(quiet=args.quiet, interactive=args.interactive, resolve=args.resolve)
+
+
+def run_check() -> int:
+    """Say whether `--live` would work, and if not, exactly what to fix.
+
+    Worth its own command because the five reasons Bedrock says no need five
+    different fixes, and finding out which during a demo is too late.
+    """
+    from pantryrelay.config import preflight, working_models
+
+    print()
+    print(f"{BOLD}PantryRelay{RESET} {DIM}— live readiness check{RESET}")
+    print(rule())
+
+    result = preflight()
+    print(f"  region    {result.region}")
+    print(f"  model     {result.model_id}")
+    if result.account:
+        print(f"  account   {result.account}")
+
+    if result:
+        print()
+        print(f"{GREEN}Bedrock answered. `py -3.14 run_demo.py --live` will run.{RESET}")
+        print()
+        return 0
+
+    print()
+    print(f"{YELLOW}Not ready: {result.problem}.{RESET}")
+    print(f"{DIM}{result.remedy}{RESET}")
+
+    # Only worth offering a different model when the model is the problem. If
+    # the whole account is refused, every candidate fails and the list is noise.
+    model_is_the_problem = (
+        result.code in {"AccessDeniedException", "ResourceNotFoundException"}
+        and "activating" not in result.problem
+    )
+    if model_is_the_problem:
+        usable = working_models()
+        if usable:
+            print(f"{DIM}Models this account can call: {', '.join(usable)}{RESET}")
+            print(f"{DIM}Put one in .env as PANTRYRELAY_MODEL_ID.{RESET}")
+
+    print(f"{DIM}The offline demo needs none of this: py -3.14 run_demo.py{RESET}")
+    print()
+    return 2
 
 
 def run_live_guarded(*, quiet: bool = False, interactive: bool = False, resolve: str | None = None) -> int:
@@ -189,14 +247,10 @@ def run_live_guarded(*, quiet: bool = False, interactive: bool = False, resolve:
         code = exc.response.get("Error", {}).get("Code", "")
         if code in {"AccessDeniedException", "UnrecognizedClientException",
                     "ValidationException", "ResourceNotFoundException",
-                    "ExpiredTokenException", "InvalidSignatureException"}:
-            from pantryrelay.agent import DEFAULT_MODEL_ID, DEFAULT_REGION
-            return bail(
-                f"Bedrock refused the call ({code})",
-                f"Model {DEFAULT_MODEL_ID!r} in {DEFAULT_REGION!r} may not be "
-                f"enabled for this account. Override with PANTRYRELAY_MODEL_ID "
-                f"/ AWS_REGION.",
-            )
+                    "ExpiredTokenException", "InvalidSignatureException",
+                    "ThrottlingException"}:
+            from pantryrelay.config import explain_client_error
+            return bail(*explain_client_error(exc))
         raise
     except BotoCoreError as exc:
         return bail("AWS could not be reached", str(exc))

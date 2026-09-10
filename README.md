@@ -374,7 +374,20 @@ storage class, an unknown pantry, and announcing before booking.
 agent on what it reads. For that, copy `.env.example` to `.env` and set a Bedrock
 model id that is enabled in your account and region. It defaults to
 `global.anthropic.claude-opus-5`; `global.anthropic.claude-sonnet-4-6` is the
-usual fallback if Opus is not enabled for you.
+usual fallback if Opus is not enabled for you. Credentials come from the standard
+AWS chain, so `aws configure` is enough.
+
+```
+python run_demo.py --check
+```
+
+`--check` answers whether a live run would work before you stand in front of an
+audience and find out. Bedrock refuses a call for several different reasons and
+each one has a different fix, so it names the one it was actually given: no
+credentials, keys rejected, a model this account cannot call, a model id that
+does not exist in this region, throttling, or an AWS account that has not
+finished activating. When the model is the problem it also lists the model ids
+the account *can* call, so there is something to paste into `.env`.
 
 ## What's real and what's seeded
 
@@ -448,7 +461,7 @@ The hackathon judges on five things. This is where to look for each.
 
 | Criterion | The strongest evidence in this repo |
 |---|---|
-| **Technological Implementation** | `CoordinatorGate` is a real Strands `InterventionHandler` on `before_tool_call`, returning `Proceed`, `Confirm` and `Deny` — not a prompt. Two agents, `structured_output` for reading and a tool-calling router. 81 tests, no credentials needed. A live demo that runs the real gate. |
+| **Technological Implementation** | `CoordinatorGate` is a real Strands `InterventionHandler` on `before_tool_call`, returning `Proceed`, `Confirm` and `Deny` — not a prompt. Two agents, `structured_output` for reading and a tool-calling router. 94 tests, no credentials needed. A live demo that runs the real gate. |
 | **Design** | The dashboard is a working product, not a screenshot: a decision queue, three kinds of coordinator choice, capacity that moves only when a human says so, and per-viewer sessions so two people can use the URL at once. |
 | **Potential Impact** | ReFED's 2024 figures put US surplus food at 70 million tons, with food service and retail — the donors modelled here — at 17.9% and 5.7% of it. The bottleneck this addresses is the half hour of triage nobody had. |
 | **Creativity & Originality** | The non-obvious claim: a human checkpoint is worthless if the model can argue with it. Making the gate a lifecycle object rather than an instruction is the whole design, and `tests/test_gate_adversarial.py` is twenty attempts to break it. |

@@ -9,20 +9,21 @@ it, instead of being smoothed away inside a single conversation.
 
 from __future__ import annotations
 
-import os
-
 from strands import Agent
 from strands.models import BedrockModel
 
+from . import config
 from .gate import CoordinatorGate
 from .models import DonationOffer
 from .tools import ALL_TOOLS
 
-# Cross-region inference profile, so the demo is not pinned to one region's
-# capacity. Override with PANTRYRELAY_MODEL_ID if Opus is not enabled in your
-# account — global.anthropic.claude-sonnet-4-6 is the usual fallback.
-DEFAULT_MODEL_ID = os.getenv("PANTRYRELAY_MODEL_ID", "global.anthropic.claude-opus-5")
-DEFAULT_REGION = os.getenv("AWS_REGION", "us-west-2")
+# Resolved per call rather than at import, because .env is loaded by the entry
+# point and importing this module first would freeze the pre-.env values. The
+# default is a cross-region inference profile, so the demo is not pinned to one
+# region's capacity; override with PANTRYRELAY_MODEL_ID if Opus is not enabled
+# in your account.
+DEFAULT_MODEL_ID = config.FALLBACK_MODEL_ID
+DEFAULT_REGION = config.FALLBACK_REGION
 
 
 READER_PROMPT = """\
@@ -80,8 +81,8 @@ soften the facts to get it through.
 def build_model(model_id: str | None = None, *, temperature: float = 0.2) -> BedrockModel:
     """Bedrock-backed model shared by both agents."""
     return BedrockModel(
-        model_id=model_id or DEFAULT_MODEL_ID,
-        region_name=DEFAULT_REGION,
+        model_id=model_id or config.model_id(),
+        region_name=config.region(),
         temperature=temperature,
     )
 
