@@ -187,6 +187,11 @@ def run_check() -> int:
     print(f"  model     {result.model_id}")
     if result.account:
         print(f"  account   {result.account}")
+    if result.arn:
+        # Naming the identity matters because root is itself a cause of
+        # refusal, and "account 9056..." hides which principal signed the call.
+        caller = "root" if result.arn.endswith(":root") else result.arn.rsplit("/", 1)[-1]
+        print(f"  identity  {caller}")
 
     if result:
         print()

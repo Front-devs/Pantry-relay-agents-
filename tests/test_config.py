@@ -102,11 +102,58 @@ def test_account_verification_is_not_reported_as_a_model_problem():
     assert "verification" in remedy.lower()
 
 
-def test_operation_not_allowed_is_the_same_cause():
-    """Bedrock returns either shape for an unverified account."""
+def test_operation_not_allowed_is_not_a_waiting_problem():
+    """The correction to the test that used to live here.
+
+    "Operation not allowed" was read as the same thing as an unverified
+    account, so the advice was to wait a few hours. It never clears: the
+    control plane keeps answering while every model in every region is refused
+    at invocation. Telling someone to wait costs them the day, so the remedy
+    has to name something to do.
+    """
     exc = FakeClientError("ValidationException", "Operation not allowed")
-    problem, _ = config.explain_client_error(exc)
-    assert "activating" in problem
+    problem, remedy = config.explain_client_error(exc)
+
+    assert "activating" not in problem
+    assert "verification" not in remedy.lower()
+    assert "IAM user" in remedy
+    assert "Support" in remedy
+
+
+def test_operation_not_allowed_names_root_when_root_is_calling():
+    """Root is the cause that is free to rule out, so it is named first."""
+    problem, remedy = config._classify(
+        "ValidationException",
+        "Operation not allowed",
+        model="global.anthropic.claude-opus-5",
+        reg="us-east-1",
+        arn="arn:aws:iam::905609278350:root",
+    )
+
+    assert "root" in problem
+    assert "AmazonBedrockFullAccess" in remedy
+
+
+def test_operation_not_allowed_stops_blaming_the_identity_once_iam_calls():
+    """Once an IAM user is refused too, the identity is ruled out.
+
+    Repeating "use an IAM user" to someone already signing as one sends them
+    to redo the fix that just failed. The account is the only cause left, so
+    the remedy has to name the case to open instead of listing both causes.
+    """
+    problem, remedy = config._classify(
+        "ValidationException",
+        "Operation not allowed",
+        model="global.anthropic.claude-opus-5",
+        reg="us-east-1",
+        arn="arn:aws:iam::905609278350:user/pantryrelay-agent",
+    )
+
+    assert "account" in problem
+    assert "root" not in remedy
+    assert "AmazonBedrockFullAccess" not in remedy
+    assert "Support" in remedy
+    assert "Operation not allowed" in remedy
 
 
 def test_denied_model_points_at_model_access(clean_env):

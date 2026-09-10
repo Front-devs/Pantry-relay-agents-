@@ -303,10 +303,10 @@ re-judge a commitment without it.
 ```bash
 pip install -r requirements.txt
 
-python run_demo.py          # offline — no AWS credentials needed
-python run_demo.py --live   # full agent run against Bedrock
-python web_app.py           # the same morning as a web dashboard
-python -m pytest tests/ -q  # whole suite, no credentials needed
+py run_demo.py          # offline — no AWS credentials needed
+py run_demo.py --live   # full agent run against Bedrock
+py web_app.py           # the same morning as a web dashboard
+py -m pytest tests/ -q  # whole suite, no credentials needed
 ```
 
 `run_demo.py --interactive` stops at each held decision and asks you to make it,
@@ -385,9 +385,16 @@ python run_demo.py --check
 audience and find out. Bedrock refuses a call for several different reasons and
 each one has a different fix, so it names the one it was actually given: no
 credentials, keys rejected, a model this account cannot call, a model id that
-does not exist in this region, throttling, or an AWS account that has not
-finished activating. When the model is the problem it also lists the model ids
-the account *can* call, so there is something to paste into `.env`.
+does not exist in this region, throttling, an AWS account that has not finished
+activating, or invocation refused for the whole account. It also prints which
+identity signed the call, because Bedrock will not invoke a model for the
+account root user even while the control plane answers root happily — an IAM
+user with `AmazonBedrockFullAccess` is what `--live` needs. If an IAM user is
+refused the same way, with `ValidationException: Operation not allowed` for
+every model in every region, the block is on the AWS account itself and only a
+Support case lifts it; waiting does not. When the model is the problem it lists
+the model ids the account *can* call, so there is something to paste into
+`.env`.
 
 ## What's real and what's seeded
 
@@ -411,6 +418,16 @@ Being straight about this, because it matters for reading the demo:
   nothing is written to disk and no message reaches a real phone.
 - **Swappable:** `data.py` is the only module that knows where pantry state
   lives. Point it at DynamoDB and every tool signature stays identical.
+- **Wired but not run live here:** `--live` puts both agents on Bedrock and is
+  complete end to end, but it has not been run on the AWS account this was built
+  on. Bedrock on that account refuses model invocation outright, with
+  `ValidationException: Operation not allowed` for every model in every region,
+  Anthropic and non-Anthropic alike. The block sits in AWS account access, not in
+  this repo: the same credentials authenticate fine and list those same models
+  through the Bedrock control plane, and `--live` needs no code change to run on
+  an account without the block. `run_demo.py --check` reports the cause up front
+  rather than letting it surface mid-demo. Nothing else here depends on it. The
+  demo, the dashboard and the whole test suite run without credentials.
 
 ## Layout
 
@@ -461,7 +478,7 @@ The hackathon judges on five things. This is where to look for each.
 
 | Criterion | The strongest evidence in this repo |
 |---|---|
-| **Technological Implementation** | `CoordinatorGate` is a real Strands `InterventionHandler` on `before_tool_call`, returning `Proceed`, `Confirm` and `Deny` — not a prompt. Two agents, `structured_output` for reading and a tool-calling router. 94 tests, no credentials needed. A live demo that runs the real gate. |
+| **Technological Implementation** | `CoordinatorGate` is a real Strands `InterventionHandler` on `before_tool_call`, returning `Proceed`, `Confirm` and `Deny` — not a prompt. Two agents, `structured_output` for reading and a tool-calling router. 96 tests, no credentials needed. A live demo that runs the real gate. |
 | **Design** | The dashboard is a working product, not a screenshot: a decision queue, three kinds of coordinator choice, capacity that moves only when a human says so, and per-viewer sessions so two people can use the URL at once. |
 | **Potential Impact** | ReFED's 2024 figures put US surplus food at 70 million tons, with food service and retail — the donors modelled here — at 17.9% and 5.7% of it. The bottleneck this addresses is the half hour of triage nobody had. |
 | **Creativity & Originality** | The non-obvious claim: a human checkpoint is worthless if the model can argue with it. Making the gate a lifecycle object rather than an instruction is the whole design, and `tests/test_gate_adversarial.py` is twenty attempts to break it. |

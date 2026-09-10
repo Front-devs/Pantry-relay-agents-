@@ -111,22 +111,69 @@ class Preflight:
     model_id: str
     account: str | None = None
     code: str | None = None
+    arn: str | None = None
 
     def __bool__(self) -> bool:
         return self.ok
 
 
-def _classify(code: str, message: str, *, model: str, reg: str) -> tuple[str, str]:
+def _classify(
+    code: str, message: str, *, model: str, reg: str, arn: str | None = None
+) -> tuple[str, str]:
     """Turn one Bedrock error into a problem and a remedy a person can act on."""
     lowered = message.lower()
 
-    if "being verified" in lowered or "operation not allowed" in lowered:
+    if "being verified" in lowered:
         return (
             "this AWS account has not finished activating",
             "Bedrock is refusing every model in every region for this account, "
             "not only this one. AWS clears new-account verification on its own, "
             "usually within a few hours. Nothing in the repo needs changing. "
             "Re-run this check later.",
+        )
+    if "operation not allowed" in lowered:
+        # Distinct from verification, and confusing them costs days. This one
+        # does not clear on its own: the control plane still answers, so the
+        # account is live, but every model in every region is refused at
+        # invocation. Calling as the account root is the cause that is free to
+        # rule out, so it goes first.
+        if arn and arn.endswith(":root"):
+            return (
+                "Bedrock will not invoke a model for the account root user",
+                "The credentials are valid and the account is active: the "
+                "Bedrock control plane answers with these same keys. It is "
+                "invocation that is refused, and the call is signed as root. "
+                "Create an IAM user, attach AmazonBedrockFullAccess, and put "
+                "that user's keys in .env. If an IAM user is refused the same "
+                "way, the block is on the account and only an AWS Support case "
+                "can lift it. Waiting does not clear this.",
+            )
+        if arn:
+            # An IAM principal is signing, so the root cause above is already
+            # ruled out. Repeating it sends someone to redo the one fix that
+            # has been tried, which is how this error costs a day. One cause
+            # is left and it needs a person at AWS, so name the case to open.
+            return (
+                "Bedrock invocation is blocked for this whole AWS account",
+                "This is not about " + repr(model) + " and not about the "
+                "identity: an IAM principal is signing the call and every "
+                "model in every region is refused identically. The block is "
+                "on the account. Only an AWS Support case lifts it. Open an "
+                "Account and Billing case, which is free on every support "
+                "plan where a technical case is not, quote the exact error "
+                "'ValidationException: Operation not allowed', and say "
+                "Bedrock invocation is refused account-wide for every model "
+                "and region. Waiting does not clear this.",
+            )
+        return (
+            "Bedrock is refusing model invocation for this whole account",
+            "Every model in every region is refused, so this is not about "
+            + repr(model)
+            + ". Two causes fit. The call may be signed with account root "
+            "credentials, which Bedrock does not accept for invocation: use an "
+            "IAM user with AmazonBedrockFullAccess instead. Otherwise the "
+            "account carries a restriction only an AWS Support case can lift. "
+            "Waiting does not clear this.",
         )
     if code == "AccessDeniedException":
         return (
@@ -199,8 +246,10 @@ def preflight(*, check_model: bool = True) -> Preflight:
         )
 
     account: str | None = None
+    arn: str | None = None
     try:
-        account = session.client("sts").get_caller_identity()["Account"]
+        identity = session.client("sts").get_caller_identity()
+        account, arn = identity["Account"], identity.get("Arn")
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "Unknown")
         problem, remedy = _classify(code, str(exc), model=model, reg=reg)
@@ -209,7 +258,7 @@ def preflight(*, check_model: bool = True) -> Preflight:
         return Preflight(False, "AWS could not be reached", str(exc), reg, model)
 
     if not check_model:
-        return Preflight(True, "", "", reg, model, account=account)
+        return Preflight(True, "", "", reg, model, account=account, arn=arn)
 
     try:
         session.client("bedrock-runtime").converse(
@@ -219,14 +268,22 @@ def preflight(*, check_model: bool = True) -> Preflight:
         )
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "Unknown")
-        problem, remedy = _classify(code, str(exc), model=model, reg=reg)
-        return Preflight(False, problem, remedy, reg, model, account=account, code=code)
+        problem, remedy = _classify(code, str(exc), model=model, reg=reg, arn=arn)
+        return Preflight(
+            False, problem, remedy, reg, model, account=account, code=code, arn=arn
+        )
     except (BotoCoreError, NoCredentialsError) as exc:
         return Preflight(
-            False, "AWS could not be reached", str(exc), reg, model, account=account
+            False,
+            "AWS could not be reached",
+            str(exc),
+            reg,
+            model,
+            account=account,
+            arn=arn,
         )
 
-    return Preflight(True, "", "", reg, model, account=account)
+    return Preflight(True, "", "", reg, model, account=account, arn=arn)
 
 
 def working_models(candidates: tuple[str, ...] = CANDIDATE_MODELS) -> list[str]:
